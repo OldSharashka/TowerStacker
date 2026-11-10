@@ -37,7 +37,12 @@ namespace Tower.Unity.View
         [Tooltip("拖动/悬停可放置格的提示色")]
         public Color hoverColor = new Color(0.55f, 0.92f, 0.95f);
 
-        private const float PopupInterval = 0.05f;
+        [Header("跳分节奏")]
+        [Tooltip("相邻格弹分间隔（文档 3.7.4 建议 0.05–0.15）")]
+        [Range(0.03f, 0.2f)] public float popupInterval = 0.05f;
+
+        [Tooltip("按住空格 / 连点时把跳分与等待转场加速到这个倍率")]
+        [Range(1f, 6f)] public float accelerateMultiplier = 3f;
 
         private TowerRun _run;
         private BoardTopology _topology;
@@ -74,7 +79,12 @@ namespace Tower.Unity.View
         private int _previewCell = -1;
 
         private PendingKind _pendingKind;
-        private float _pendingAt;
+        /// <summary>还要等多久（按跳分时间计，加速时消耗得更快）。</summary>
+        private float _pendingRemaining;
+
+        private float _accelerateUntil;
+        private int _accelerateClicks;
+        private float _lastAccelerateClick;
 
         // 等飘字期间，HUD 还应该显示刚打完的那一回合（Core 已经切到下一回合了）
         private FaceId _lastFace;
@@ -148,7 +158,9 @@ namespace Tower.Unity.View
             ClearHover();
             ClearFloating();
             _pendingKind = PendingKind.None;
-            _pendingAt = 0f;
+            _pendingRemaining = 0f;
+            _accelerateUntil = 0f;
+            _accelerateClicks = 0;
             _message = string.Empty;
 
             if (_result != null) _result.Hide();
@@ -211,6 +223,7 @@ namespace Tower.Unity.View
             // 转场中、或"等飘字播完再进下一回合"的间隙：锁输入
             if (IsInputLocked())
             {
+                if (Input.GetMouseButtonDown(0)) RegisterAccelerateClick();
                 if (_mode != PointerMode.None || _previewCell >= 0) CancelPointer();
                 return;
             }
@@ -517,11 +530,11 @@ namespace Tower.Unity.View
             string hint;
             if (_pendingKind == PendingKind.Settle)
             {
-                hint = "得分显示完就出结算";
+                hint = "得分播放中 · 空格/连点加速";
             }
             else if (_pendingKind == PendingKind.NextTurn)
             {
-                hint = "得分显示完就进下一回合";
+                hint = "得分播放中 · 空格/连点加速 → 下一回合";
             }
             else if (_run.Phase == TurnPhase.RunEnded)
             {
@@ -642,19 +655,19 @@ namespace Tower.Unity.View
 
                 SpawnFloating(source.Face.bounds.center, $"+{contribution.Amount}",
                     new Color(1f, 0.93f, 0.65f), delay);
-                delay += PopupInterval;
+                delay += popupInterval;
             }
 
             // 三颗都放完：等最后一次的 +N 播完，再切下一回合（或出结算）
             if (result.TurnCompleted)
             {
-                float lastStart = count > 0 ? (count - 1) * PopupInterval : 0f;
+                float lastStart = count > 0 ? (count - 1) * popupInterval : 0f;
                 float wait = lastStart + PopupLife + 0.08f;
                 if (wait < 0.2f) wait = 0.2f;
 
                 bool lastTurn = _run.State.TurnIndex + 1 >= _run.Settings.TurnsPerRun;
                 _pendingKind = lastTurn ? PendingKind.Settle : PendingKind.NextTurn;
-                _pendingAt = Time.unscaledTime + wait;
+                _pendingRemaining = wait;
             }
         }
 
@@ -699,13 +712,42 @@ namespace Tower.Unity.View
         private void TickPendingTurn()
         {
             if (_pendingKind == PendingKind.None) return;
-            if (Time.unscaledTime < _pendingAt) return;
+
+            // 用「跳分时间」倒计时：按住空格/连点时按倍率消耗，飘字与等待一起加速。
+            _pendingRemaining -= Time.unscaledDeltaTime * CurrentSpeed;
+            if (_pendingRemaining > 0f) return;
 
             PendingKind kind = _pendingKind;
             _pendingKind = PendingKind.None;
 
             if (kind == PendingKind.NextTurn) BeginTurnVisuals();
             else ApplyRunEnd();
+        }
+
+        /// <summary>跳分播放速度：按住空格，或刚刚连点过。</summary>
+        private float CurrentSpeed
+        {
+            get
+            {
+                if (_accelerateUntil > Time.unscaledTime) return accelerateMultiplier;
+                if (Input.GetKey(KeyCode.Space)) return accelerateMultiplier;
+                return 1f;
+            }
+        }
+
+        /// <summary>等待转场时的连点加速：0.5s 内点 3 下，加速 1.5s。</summary>
+        private void RegisterAccelerateClick()
+        {
+            float now = Time.unscaledTime;
+            if (now - _lastAccelerateClick > 0.5f) _accelerateClicks = 0;
+            _lastAccelerateClick = now;
+            _accelerateClicks++;
+
+            if (_accelerateClicks >= 3)
+            {
+                _accelerateUntil = now + 1.5f;
+                _accelerateClicks = 0;
+            }
         }
 
         // ------------------------------------------------------------------
@@ -748,7 +790,7 @@ namespace Tower.Unity.View
             for (int i = _floatings.Count - 1; i >= 0; i--)
             {
                 Floating f = _floatings[i];
-                f.Age += dt;
+                f.Age += dt * CurrentSpeed;
 
                 if (f.Age < f.Delay) continue;
 

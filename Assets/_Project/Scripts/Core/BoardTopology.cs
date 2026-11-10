@@ -106,11 +106,34 @@ namespace Tower.Core
                 }
 
                 var keys = new List<int>(merged.Keys);
-                keys.Sort();
-                var list = new Neighbor[keys.Count];
+
+                // 顺时针排序（该格所在面的 Up 为 0°，向右转）：
+                // 文档 3.7.4 要求「从正上方起、顺时针」固定顺序，玩家靠它核对哪个邻居给了分。
+                // 用几何角度而不是偏移量，跨面邻居也能排进去。
+                var angles = new float[keys.Count];
                 for (int i = 0; i < keys.Count; i++)
                 {
-                    list[i] = new Neighbor(keys[i], merged[keys[i]]);
+                    Vec3 delta = directions[keys[i]] - directions[cellId];
+                    float u = Vec3.Dot(delta, frame.Right);
+                    float v = Vec3.Dot(delta, frame.Up);
+                    float angle = (float)Math.Atan2(u, v);
+                    if (angle < 0f) angle += (float)(Math.PI * 2.0);
+                    angles[i] = angle;
+                }
+
+                var order = new List<int>(keys.Count);
+                for (int i = 0; i < keys.Count; i++) order.Add(i);
+                order.Sort((ia, ib) =>
+                {
+                    int cmp = angles[ia].CompareTo(angles[ib]);
+                    return cmp != 0 ? cmp : keys[ia].CompareTo(keys[ib]);
+                });
+
+                var list = new Neighbor[keys.Count];
+                for (int i = 0; i < order.Count; i++)
+                {
+                    int key = keys[order[i]];
+                    list[i] = new Neighbor(key, merged[key]);
                 }
 
                 adj[cellId] = list;

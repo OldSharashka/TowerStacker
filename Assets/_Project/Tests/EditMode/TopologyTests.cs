@@ -166,6 +166,29 @@ namespace Tower.Tests
             Assert.IsEmpty(errors, string.Join("\n", errors));
         }
 
+        [Test]
+        public void Neighbors_AreClockwiseFromUp()
+        {
+            // 文档 3.7.4：跳分顺序必须固定为「正上方起、顺时针」，玩家用它核对哪个邻居给了分。
+            int center = Board.CellId(FaceId.Front, 1, 1);
+            var expected = new[]
+            {
+                Board.CellId(FaceId.Front, 0, 1),   // 上
+                Board.CellId(FaceId.Front, 0, 2),   // 右上
+                Board.CellId(FaceId.Front, 1, 2),   // 右
+                Board.CellId(FaceId.Front, 2, 2),   // 右下
+                Board.CellId(FaceId.Front, 2, 1),   // 下
+                Board.CellId(FaceId.Front, 2, 0),   // 左下
+                Board.CellId(FaceId.Front, 1, 0),   // 左
+                Board.CellId(FaceId.Front, 0, 0),   // 左上
+            };
+
+            var actual = new List<int>();
+            foreach (Neighbor n in _topo.Neighbors(center)) actual.Add(n.CellId);
+
+            CollectionAssert.AreEqual(expected, actual, "面中心的邻居应当从正上方起顺时针排列");
+        }
+
         private void AssertOrth(FaceId fa, int ra, int ca, FaceId fb, int rb, int cb)
         {
             int a = Board.CellId(fa, ra, ca);
