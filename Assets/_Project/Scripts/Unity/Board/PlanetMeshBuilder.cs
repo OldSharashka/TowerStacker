@@ -35,7 +35,7 @@ namespace Tower.Unity.View
 
         [Header("文字")]
         public TMP_FontAsset font;
-        public float fontSize = 1.6f;
+        public float fontSize = 0.95f;
         public float textLift = 0.03f;
 
         private readonly List<CellView> _cells = new List<CellView>(Board.CellCount);

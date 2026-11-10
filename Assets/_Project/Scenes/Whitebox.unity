@@ -179,7 +179,7 @@ MonoBehaviour:
   value3Color: {r: 0.36, g: 0.6, b: 0.95, a: 1}
   textColor: {r: 0.1, g: 0.11, b: 0.14, a: 1}
   font: {fileID: 0}
-  fontSize: 0.45
+  fontSize: 0.95
   textLift: 0.03
 --- !u!4 &756688274
 Transform:
@@ -213,6 +213,7 @@ MonoBehaviour:
   Seed: 20261110
   TargetScore: 170
   AutoPlayTurns: 5
+  slowPopups: 1
 --- !u!1 &960808817
 GameObject:
   m_ObjectHideFlags: 0

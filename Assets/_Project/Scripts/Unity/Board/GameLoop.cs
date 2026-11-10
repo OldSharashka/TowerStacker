@@ -14,6 +14,7 @@ namespace Tower.Unity.View
     {
         [Header("引用")]
         public PlanetMeshBuilder Planet;
+        public PlanetSpin Spin;
         public Camera Cam;
 
         [Header("一局参数")]
@@ -22,6 +23,9 @@ namespace Tower.Unity.View
 
         [Tooltip(">0 时开局自动放 N 个回合（只用于截图与调试），0 = 手动")]
         public int AutoPlayTurns;
+
+        [Tooltip("调试用：把跳分飘字放慢到 3 秒，方便观察/截图")]
+        public bool slowPopups = true;
 
         private TowerRun _run;
         private BoardTopology _topology;
@@ -44,6 +48,8 @@ namespace Tower.Unity.View
         private void Start()
         {
             if (Planet == null) Planet = FindObjectOfType<PlanetMeshBuilder>();
+            if (Spin == null) Spin = GetComponent<PlanetSpin>();
+            if (Spin == null) Spin = gameObject.AddComponent<PlanetSpin>();   // 白盒期自动挂，省得手动配
             if (Cam == null) Cam = Camera.main;
 
             NewRun();
@@ -75,9 +81,78 @@ namespace Tower.Unity.View
 
         private void Update()
         {
-            HandleClick();
+            HandlePointer();
             HandleKeys();
             AnimateFloating(Time.deltaTime);
+        }
+
+        private bool _pressed;
+        private bool _dragged;
+        private Vector2 _pressPos;
+        private Vector2 _lastMousePos;
+        private int _pressedCell = -1;
+
+        /// <summary>按下就准备；移动超过 6px 变成转球；没移动就松手才是落子。</summary>
+        private void HandlePointer()
+        {
+            if (_run == null) return;
+
+            if (Spin != null && Spin.IsTransitioning)
+            {
+                _pressed = false;
+                _dragged = false;
+                _pressedCell = -1;
+                return;
+            }
+
+            Vector2 mouse = Input.mousePosition;
+
+            if (Input.GetMouseButtonDown(0))
+            {
+                _pressed = true;
+                _dragged = false;
+                _pressPos = mouse;
+                _lastMousePos = mouse;
+                _pressedCell = PickCell();
+                return;
+            }
+
+            if (Input.GetMouseButton(0) && _pressed)
+            {
+                Vector2 delta = mouse - _lastMousePos;
+                _lastMousePos = mouse;
+
+                if (!_dragged && (mouse - _pressPos).sqrMagnitude > 36f) _dragged = true;
+
+                if (_dragged && Spin != null && delta.sqrMagnitude > 0.0001f)
+                {
+                    Spin.RotateBy(delta.x, delta.y, Cam);
+                }
+                return;
+            }
+
+            if (Input.GetMouseButtonUp(0))
+            {
+                bool clicked = _pressed && !_dragged && _pressedCell >= 0;
+                int cell = _pressedCell;
+
+                _pressed = false;
+                _dragged = false;
+                _pressedCell = -1;
+
+                if (clicked) TryPlace(cell);
+            }
+        }
+
+        private int PickCell()
+        {
+            if (Cam == null) return -1;
+
+            Ray ray = Cam.ScreenPointToRay(Input.mousePosition);
+            if (!Physics.Raycast(ray, out RaycastHit hit, 100f)) return -1;
+
+            CellView view = hit.collider.GetComponentInParent<CellView>();
+            return view != null ? view.CellId : -1;
         }
 
         private void HandleKeys()
@@ -94,20 +169,7 @@ namespace Tower.Unity.View
             }
         }
 
-        private void HandleClick()
-        {
-            if (_run == null || _run.Phase != TurnPhase.Placing) return;
-            if (!Input.GetMouseButtonDown(0)) return;
-            if (Cam == null || Planet == null) return;
 
-            Ray ray = Cam.ScreenPointToRay(Input.mousePosition);
-            if (!Physics.Raycast(ray, out RaycastHit hit, 100f)) return;
-
-            CellView view = hit.collider.GetComponentInParent<CellView>();
-            if (view == null) return;
-
-            TryPlace(view.CellId);
-        }
 
         private void TryPlace(int cellId)
         {
@@ -135,6 +197,7 @@ namespace Tower.Unity.View
         private void OnTurnStarted(TowerRun run)
         {
             if (Planet != null) Planet.HighlightRegion(run.CurrentFace);
+            if (Spin != null) Spin.FocusFace(run.CurrentFace);
             ShowMessage($"第 {run.State.TurnIndex + 1} 回合 · {run.CurrentFace} 区域");
         }
 
@@ -199,6 +262,7 @@ namespace Tower.Unity.View
                 Text = tmp,
                 Origin = worldPos,
                 Delay = delay,
+                Life = slowPopups ? 3f : 0.8f,
                 BaseColor = color,
             });
         }
@@ -266,18 +330,27 @@ namespace Tower.Unity.View
             }
         }
 
+        private GUIStyle _style;
+        private GUIStyle _panel;
+
         private void OnGUI()
         {
             if (_run == null) return;
 
-            var style = new GUIStyle(GUI.skin.label) { fontSize = 14, richText = true };
-            var panel = new GUIStyle(GUI.skin.box) { alignment = TextAnchor.UpperLeft };
+            // 样式只建一次：OnGUI 每帧都跑，每帧 new 会产生大量垃圾
+            if (_style == null)
+            {
+                _style = new GUIStyle(GUI.skin.label) { fontSize = 12, richText = true };
+                _panel = new GUIStyle(GUI.skin.box) { alignment = TextAnchor.UpperLeft };
+            }
+            GUIStyle style = _style;
+            GUIStyle panel = _panel;
 
-            GUILayout.BeginArea(new Rect(12, 12, 340, 200), panel);
+            GUILayout.BeginArea(new Rect(10, 10, 252, 178), panel);
             GUILayout.Label("<b>高塔堆叠者</b> · 白盒", style);
             GUILayout.Label($"回合 {_run.State.TurnIndex + 1}/18    轮 {_run.State.RoundIndex + 1}/3", style);
-            GUILayout.Label($"分数 <b>{_run.State.TotalScore}</b> / 目标 {_run.State.TargetScore}", style);
-            GUILayout.Label($"当前区域 <b>{_run.CurrentFace}</b>    重掷剩 {_run.RerollsLeft}", style);
+            GUILayout.Label($"分数 <b>{_run.State.TotalScore}</b> / {_run.State.TargetScore}", style);
+            GUILayout.Label($"区域 <b>{_run.CurrentFace}</b>    重掷 {_run.RerollsLeft}", style);
 
             if (_run.Phase == TurnPhase.Placing)
             {
