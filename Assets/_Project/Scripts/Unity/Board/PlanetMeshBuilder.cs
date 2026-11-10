@@ -21,13 +21,17 @@ namespace Tower.Unity.View
         [Range(0f, 0.2f)]
         public float faceGap = 0.02f;
 
-        [Tooltip("单格四角向格心收缩的比例，用于格子之间留缝")]
+        [Tooltip("单格四角向格心收缩的比例，用来在格子之间留缝（缝里露出的是深色底球，看起来就是网格线）")]
         [Range(0f, 0.2f)]
-        public float cellGap = 0.035f;
+        public float cellGap = 0.025f;
 
         [Header("白盒配色")]
         public Color emptyColor = new Color(0.58f, 0.63f, 0.71f);
-        public Color regionTint = new Color(0.42f, 0.50f, 0.62f);
+        public Color regionTint = new Color(0.80f, 0.84f, 0.92f);
+        public Color backingColor = new Color(0.10f, 0.11f, 0.14f);
+        public Color frameColor = new Color(1f, 0.82f, 0.25f);
+        public float frameWidth = 0.03f;
+        public float frameLift = 0.015f;
         public Color value1Color = new Color(0.90f, 0.45f, 0.38f);
         public Color value2Color = new Color(0.42f, 0.76f, 0.50f);
         public Color value3Color = new Color(0.45f, 0.62f, 0.92f);
@@ -40,6 +44,7 @@ namespace Tower.Unity.View
 
         private readonly List<CellView> _cells = new List<CellView>(Board.CellCount);
         private readonly List<GameObject> _spawned = new List<GameObject>(Board.CellCount);
+        private LineRenderer[] _frames;
         private Material _material;
         private static readonly int ColorId = Shader.PropertyToID("_Color");
 
@@ -63,6 +68,10 @@ namespace Tower.Unity.View
             Clear();
             EnsureMaterial();
 
+            // 底下垫一层实心球：格子之间的缝会露出它，看起来是一条深色网格线，
+            // 而不是"透过去看到球的背面"。
+            CreateBacking();
+
             for (int face = 0; face < Board.FaceCount; face++)
             {
                 for (int row = 0; row < Board.CellsPerRow; row++)
@@ -72,6 +81,102 @@ namespace Tower.Unity.View
                         CreateCell((FaceId)face, row, col);
                     }
                 }
+            }
+
+            CreateRegionFrames();
+        }
+
+        private void CreateBacking()
+        {
+            var backing = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            backing.name = "Backing";
+            backing.hideFlags = HideFlags.DontSave;
+            backing.transform.SetParent(transform, false);
+            backing.transform.localScale = Vector3.one * (radius * 2f * 0.995f);
+
+            Collider collider = backing.GetComponent<Collider>();
+            if (collider != null)
+            {
+                if (Application.isPlaying) Destroy(collider);
+                else DestroyImmediate(collider);
+            }
+
+            var renderer = backing.GetComponent<MeshRenderer>();
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+
+            var mat = new Material(Shader.Find("Standard") ?? Shader.Find("Unlit/Color"))
+            {
+                name = "Backing",
+                hideFlags = HideFlags.DontSave,
+            };
+            mat.color = backingColor;
+            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0f);
+            renderer.sharedMaterial = mat;
+
+            _spawned.Add(backing);
+        }
+
+        /// <summary>当前区域外面套一圈亮框。</summary>
+        private void CreateRegionFrames()
+        {
+            _frames = new LineRenderer[Board.FaceCount];
+
+            for (int face = 0; face < Board.FaceCount; face++)
+            {
+                var go = new GameObject($"Frame_{(FaceId)face}");
+                go.hideFlags = HideFlags.DontSave;
+                go.transform.SetParent(transform, false);
+
+                var line = go.AddComponent<LineRenderer>();
+                line.useWorldSpace = true;
+                line.loop = true;
+                line.widthMultiplier = frameWidth;
+                line.numCapVertices = 2;
+                line.textureMode = LineTextureMode.Stretch;
+                line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                line.receiveShadows = false;
+
+                var mat = new Material(Shader.Find("Unlit/Color") ?? Shader.Find("Sprites/Default"))
+                {
+                    name = "FrameLine",
+                    hideFlags = HideFlags.DontSave,
+                };
+                mat.color = frameColor;
+                line.sharedMaterial = mat;
+
+                FaceFrame frame = FaceFrames.Get((FaceId)face);
+                float h = 1f - faceGap + 0.05f;
+
+                const int perSide = 12;
+                var points = new Vector3[perSide * 4];
+                int idx = 0;
+
+                for (int s = 0; s < 4; s++)
+                {
+                    for (int k = 0; k < perSide; k++)
+                    {
+                        float t = k / (float)perSide;
+                        float u, v;
+                        switch (s)
+                        {
+                            case 0: u = Mathf.Lerp(-h, h, t); v = h; break;
+                            case 1: u = h; v = Mathf.Lerp(h, -h, t); break;
+                            case 2: u = Mathf.Lerp(h, -h, t); v = -h; break;
+                            default: u = -h; v = Mathf.Lerp(-h, h, t); break;
+                        }
+
+                        Vector3 p = ToSphere(frame, u, v);
+                        points[idx++] = p.normalized * (radius + frameLift);
+                    }
+                }
+
+                line.positionCount = points.Length;
+                line.SetPositions(points);
+                line.enabled = false;
+
+                _frames[face] = line;
+                _spawned.Add(go);
             }
         }
 
@@ -256,9 +361,17 @@ namespace Tower.Unity.View
             view.SetText(value > 0 ? value.ToString() : string.Empty, textColor);
         }
 
-        /// <summary>把某个区域整片染色，帮助玩家看出「本回合是哪 9 格」。</summary>
+        /// <summary>把某个区域整片染色并亮框圈起来，帮助玩家看出「本回合是哪 9 格」。</summary>
         public void HighlightRegion(FaceId? face)
         {
+            if (_frames != null)
+            {
+                for (int i = 0; i < _frames.Length; i++)
+                {
+                    if (_frames[i] != null) _frames[i].enabled = face.HasValue && (int)face.Value == i;
+                }
+            }
+
             for (int cell = 0; cell < _cells.Count; cell++)
             {
                 CellView view = _cells[cell];
@@ -294,6 +407,7 @@ namespace Tower.Unity.View
 
             _spawned.Clear();
             _cells.Clear();
+            _frames = null;
         }
     }
 }
