@@ -35,8 +35,8 @@ namespace Tower.Unity.View
 
         [Header("文字")]
         public TMP_FontAsset font;
-        public float fontSize = 6f;
-        public float textLift = 0.02f;
+        public float fontSize = 1.6f;
+        public float textLift = 0.03f;
 
         private readonly List<CellView> _cells = new List<CellView>(Board.CellCount);
         private readonly List<GameObject> _spawned = new List<GameObject>(Board.CellCount);
@@ -141,11 +141,11 @@ namespace Tower.Unity.View
             tmp.text = string.Empty;
             tmp.fontSize = fontSize;
             tmp.enableAutoSizing = true;
-            tmp.fontSizeMin = 1f;
+            tmp.fontSizeMin = 0.4f;
             tmp.fontSizeMax = fontSize;
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.color = textColor;
-            tmp.rectTransform.sizeDelta = new Vector2(0.5f, 0.5f);
+            tmp.rectTransform.sizeDelta = new Vector2(0.34f, 0.34f);
             tmp.raycastTarget = false;
 
             return tmp;
