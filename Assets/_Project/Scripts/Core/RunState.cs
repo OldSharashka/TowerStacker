@@ -15,6 +15,9 @@ namespace Tower.Core
 
         public readonly List<TurnRecord> History = new List<TurnRecord>();
 
+        /// <summary>每次三选一的记录（供复现与导出）。</summary>
+        public readonly List<CardChoiceRecord> CardHistory = new List<CardChoiceRecord>();
+
         public RunState()
         {
             for (int i = 0; i < Faces.Length; i++)

@@ -21,6 +21,9 @@ namespace Tower.Core
         public int RoundsPerRun = 3;
         public int TargetScore = 170;
 
+        /// <summary>是否启用卡牌（默认关，保证旧单测与无卡模拟不受影响）。</summary>
+        public bool EnableCards;
+
         public int TurnsPerRun => TurnsPerRound * RoundsPerRun;   // 18
         public int TotalCells => TurnsPerRun * DicePerTurn;        // 54
     }
@@ -67,7 +70,21 @@ namespace Tower.Core
         private readonly List<FaceId> _roundQueue = new List<FaceId>(Board.FaceCount);
         private TurnRecord _currentRecord;
 
+        private readonly ICardEffect[] _cardSlots = new ICardEffect[3];
+        private readonly List<CardDefinition> _offered = new List<CardDefinition>(3);
+        private int _cardChoicesMade;
+
         public IReadOnlyList<int> Dice => _dice;
+
+        /// <summary>3 个卡槽；空槽为 null。卡效果常驻，直到被替换。</summary>
+        public IReadOnlyList<ICardEffect> CardSlots => _cardSlots;
+
+        /// <summary>当前待选的三张卡（没有待选时为空）。</summary>
+        public IReadOnlyList<CardDefinition> OfferedCards => _offered;
+
+        public bool HasPendingCardChoice { get; private set; }
+
+        public int CardChoicesMade => _cardChoicesMade;
 
         /// <summary>新回合开始（含开局第一回合）。</summary>
         public event Action<TowerRun> TurnStarted;
@@ -152,7 +169,97 @@ namespace Tower.Core
                 Dice = (int[])_dice.Clone(),
             };
 
+            TryDrawCardChoice();
             TurnStarted?.Invoke(this);
+        }
+
+        /// <summary>
+        /// 每 3 回合（第 1/4/7/10/13/16 回合开局）抽 3 张不重复的卡。
+        /// 抽卡放在 StartTurn 里，随机序列与 UI 操作无关；同 seed 必然同一组。
+        /// </summary>
+        private void TryDrawCardChoice()
+        {
+            if (!Settings.EnableCards) return;
+            if (State.TurnIndex % 3 != 0) return;
+            if (_cardChoicesMade >= 6) return;
+
+            _offered.Clear();
+            int guard = 0;
+            while (_offered.Count < 3 && guard++ < 60)
+            {
+                CardDefinition definition = CardCatalog.All[_random.NextInt(CardCatalog.All.Count)];
+                bool duplicate = false;
+                for (int i = 0; i < _offered.Count; i++)
+                {
+                    if (_offered[i].Id == definition.Id) { duplicate = true; break; }
+                }
+                if (!duplicate) _offered.Add(definition);
+            }
+
+            HasPendingCardChoice = _offered.Count > 0;
+        }
+
+        /// <summary>
+        /// 选择一张卡。slotIndex = -1 表示放第一个空槽；槽位已满时必须指定要替换的槽位。
+        /// </summary>
+        public bool ChooseCard(int offeredIndex, int slotIndex)
+        {
+            if (!HasPendingCardChoice) return false;
+            if (offeredIndex < 0 || offeredIndex >= _offered.Count) return false;
+            if (slotIndex >= _cardSlots.Length) return false;
+
+            if (slotIndex < 0)
+            {
+                slotIndex = -1;
+                for (int i = 0; i < _cardSlots.Length; i++)
+                {
+                    if (_cardSlots[i] == null) { slotIndex = i; break; }
+                }
+                if (slotIndex < 0) return false;
+            }
+
+            CardDefinition definition = _offered[offeredIndex];
+            ICardEffect effect = CardCatalog.Create(definition.Id);
+            if (effect == null) return false;
+
+            string replaced = null;
+            if (_cardSlots[slotIndex] != null)
+            {
+                replaced = _cardSlots[slotIndex].Id;
+                _cardSlots[slotIndex].OnRemove(State);
+            }
+
+            _cardSlots[slotIndex] = effect;
+            effect.OnAcquire(State);
+
+            var record = new CardChoiceRecord
+            {
+                TurnIndex = State.TurnIndex,
+                Offered = new string[_offered.Count],
+                Chosen = definition.Id,
+                Replaced = replaced,
+            };
+            for (int i = 0; i < _offered.Count; i++) record.Offered[i] = _offered[i].Id;
+            State.CardHistory.Add(record);
+
+            _cardChoicesMade++;
+            HasPendingCardChoice = false;
+            _offered.Clear();
+            return true;
+        }
+
+        /// <summary>按当前卡槽算一次落子的得分；预览与正式结算共用。</summary>
+        public ScoringResult EvaluatePlacement(int cellId, int value, int dieIndex)
+        {
+            return ScoringPipeline.Evaluate(Topology, State, cellId, value, dieIndex, Scoring, _cardSlots);
+        }
+
+        /// <summary>预览：用当前这颗骰子的值算。</summary>
+        public ScoringResult PreviewPlacement(int cellId)
+        {
+            int index = PlacedThisTurn;
+            int value = index < _dice.Length ? _dice[index] : 0;
+            return EvaluatePlacement(cellId, value, index);
         }
 
         /// <summary>
@@ -204,8 +311,9 @@ namespace Tower.Core
                 throw new InvalidOperationException("本回合的骰子已经放完");
             }
 
-            int value = _dice[PlacedThisTurn];
-            ScoringResult scoring = Scorer.Evaluate(Topology, State, cellId, value, Scoring);
+            int dieIndex = PlacedThisTurn;
+            int value = _dice[dieIndex];
+            ScoringResult scoring = EvaluatePlacement(cellId, value, dieIndex);
 
             State.Place(cellId, value);
             State.TotalScore += scoring.Total;
@@ -224,6 +332,12 @@ namespace Tower.Core
 
             PlacedThisTurn++;
             bool turnCompleted = PlacedThisTurn >= _dice.Length;
+
+            var context = new PlacementContext(Topology, State, cellId, value, dieIndex);
+            for (int i = 0; i < _cardSlots.Length; i++)
+            {
+                if (_cardSlots[i] != null) _cardSlots[i].OnPlacementScored(context, scoring);
+            }
 
             var result = new PlacementResult(
                 cellId, value, scoring.Total, scoring.Contributions, turnCompleted);

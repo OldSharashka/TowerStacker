@@ -52,6 +52,8 @@ namespace Tower.Unity.View
         private ResultPanelView _result;
         private DebugPanelView _debug;
         private NetView _net;
+        private CardBarView _cardBar;
+        private CardChoiceView _cardChoice;
 
         private enum PointerMode
         {
@@ -140,6 +142,11 @@ namespace Tower.Unity.View
                 _debug.NetViewClicked += OnDebugToggleNet;
 
                 _net = NetView.Create(canvas.transform);
+
+                _cardBar = CardBarView.Create(canvas.transform);
+                _cardChoice = CardChoiceView.Create(canvas.transform);
+                _cardChoice.CardPicked += OnCardPicked;
+                _cardChoice.CardReplaced += OnCardReplaced;
             }
 
             NewRun();
@@ -167,6 +174,11 @@ namespace Tower.Unity.View
                 _debug.PopupDelta -= OnDebugPopupDelta;
                 _debug.NetViewClicked -= OnDebugToggleNet;
             }
+            if (_cardChoice != null)
+            {
+                _cardChoice.CardPicked -= OnCardPicked;
+                _cardChoice.CardReplaced -= OnCardReplaced;
+            }
             UnsubscribeRun();
         }
 
@@ -191,6 +203,7 @@ namespace Tower.Unity.View
             _message = string.Empty;
 
             if (_result != null) _result.Hide();
+            if (_cardChoice != null) _cardChoice.Hide();
             if (_hud != null)
             {
                 _hud.ClearLog();
@@ -199,7 +212,7 @@ namespace Tower.Unity.View
             }
 
             _topology = BoardTopology.Build();
-            var settings = new RunSettings { TargetScore = TargetScore };
+            var settings = new RunSettings { TargetScore = TargetScore, EnableCards = true };
 
             _run = new TowerRun(Seed, _topology, ScoringConfig.Default, settings);
             _run.TurnStarted += OnTurnStarted;
@@ -232,6 +245,26 @@ namespace Tower.Unity.View
             HandleKeys();
             AnimateFloating(Time.deltaTime);
             UpdateHudText();
+            UpdateCardChoice();
+        }
+
+        /// <summary>转场结束后，如果这一回合该抽卡，就弹三选一（面板显示期间输入锁）。</summary>
+        private void UpdateCardChoice()
+        {
+            if (_run == null || _cardChoice == null) return;
+
+            // 已经选过（或调试自动选掉）就把面板收起来
+            if (_cardChoice.IsVisible && !_run.HasPendingCardChoice)
+            {
+                _cardChoice.Hide();
+                return;
+            }
+
+            if (!_run.HasPendingCardChoice || _cardChoice.IsVisible) return;
+            if (Spin != null && Spin.IsTransitioning) return;
+            if (_result != null && _result.IsVisible) return;
+
+            _cardChoice.Show(_run.OfferedCards, _run.CardSlots, _run.CardChoicesMade + 1, 6);
         }
 
         // ------------------------------------------------------------------
@@ -242,7 +275,8 @@ namespace Tower.Unity.View
         {
             return _pendingKind != PendingKind.None
                    || (Spin != null && Spin.IsTransitioning)
-                   || (_result != null && _result.IsVisible);
+                   || (_result != null && _result.IsVisible)
+                   || (_run != null && _run.HasPendingCardChoice);
         }
 
         private void HandlePointer()
@@ -250,7 +284,7 @@ namespace Tower.Unity.View
             // 转场中、或"等飘字播完再进下一回合"的间隙：锁输入
             if (IsInputLocked())
             {
-                if (Input.GetMouseButtonDown(0)) RegisterAccelerateClick();
+                if (_pendingKind != PendingKind.None && Input.GetMouseButtonDown(0)) RegisterAccelerateClick();
                 if (_mode != PointerMode.None || _previewCell >= 0) CancelPointer();
                 return;
             }
@@ -541,6 +575,7 @@ namespace Tower.Unity.View
         private void RefreshTray()
         {
             if (_tray != null && _run != null) _tray.Refresh(_run);
+            if (_cardBar != null && _run != null) _cardBar.Refresh(_run.CardSlots);
             RefreshHud();
             RefreshDebugViews();
         }
@@ -571,6 +606,13 @@ namespace Tower.Unity.View
         private void UpdateHudText()
         {
             if (_hud == null || _run == null) return;
+
+            if (_run.HasPendingCardChoice)
+            {
+                _hud.SetHint("选择一张卡（三选一）");
+                _hud.SetMessage(string.Empty);
+                return;
+            }
 
             string hint;
             if (_pendingKind == PendingKind.Settle)
@@ -607,8 +649,7 @@ namespace Tower.Unity.View
             if (_run == null || _topology == null) return 0;
             if (_run.PlacedThisTurn >= _run.Dice.Count) return 0;
 
-            int value = _run.Dice[_run.PlacedThisTurn];
-            return Scorer.Evaluate(_topology, _run.State, cellId, value, _run.Scoring).Total;
+            return _run.PreviewPlacement(cellId).Total;
         }
 
         private int PickCell()
@@ -709,8 +750,9 @@ namespace Tower.Unity.View
                 CellView source = Planet != null ? Planet.GetCell(contribution.SourceCellId) : null;
                 if (source == null || source.Face == null) continue;
 
+                bool fromCard = contribution.RuleId != null && contribution.RuleId.StartsWith("C.");
                 SpawnFloating(source.Face.bounds.center, $"+{contribution.Amount}",
-                    new Color(1f, 0.93f, 0.65f), delay);
+                    fromCard ? new Color(0.88f, 0.66f, 1f) : new Color(1f, 0.93f, 0.65f), delay);
                 delay += popupInterval;
             }
 
@@ -740,6 +782,7 @@ namespace Tower.Unity.View
         {
             if (_run == null) return;
 
+            if (_cardChoice != null) _cardChoice.Hide();
             if (Planet != null) Planet.HighlightRegion(null);
             RefreshTray();
 
@@ -889,6 +932,34 @@ namespace Tower.Unity.View
         }
 
         // ------------------------------------------------------------------
+        // 卡牌
+        // ------------------------------------------------------------------
+
+        private void OnCardPicked(int offeredIndex)
+        {
+            if (_run == null) return;
+
+            if (_run.ChooseCard(offeredIndex, -1))
+            {
+                _cardChoice.Hide();
+                RefreshTray();
+                ShowMessage("获得卡牌");
+            }
+        }
+
+        private void OnCardReplaced(int offeredIndex, int slot)
+        {
+            if (_run == null) return;
+
+            if (_run.ChooseCard(offeredIndex, slot))
+            {
+                _cardChoice.Hide();
+                RefreshTray();
+                ShowMessage("已替换卡槽");
+            }
+        }
+
+        // ------------------------------------------------------------------
         // 飘字
         // ------------------------------------------------------------------
 
@@ -977,6 +1048,22 @@ namespace Tower.Unity.View
                     Debug.LogWarning("AutoPlay 没有收敛，已中止");
                     return;
                 }
+
+                // 调试自动打时把三选一也自动选掉（优先空槽，满槽就换 1 号槽）
+                if (_run.HasPendingCardChoice)
+                {
+                    int slot = -1;
+                    for (int i = 0; i < _run.CardSlots.Count; i++)
+                    {
+                        if (_run.CardSlots[i] == null) { slot = i; break; }
+                    }
+                    if (slot < 0) slot = 0;
+                    _run.ChooseCard(0, slot);
+                    if (_cardChoice != null) _cardChoice.Hide();
+                    RefreshTray();
+                    continue;
+                }
+
                 if (_run.Phase != TurnPhase.Placing) return;
 
                 int value = _run.Dice[_run.PlacedThisTurn];
@@ -985,7 +1072,7 @@ namespace Tower.Unity.View
 
                 foreach (int cell in _run.EmptyCellsOnCurrentFace())
                 {
-                    ScoringResult probe = Scorer.Evaluate(_topology, _run.State, cell, value, _run.Scoring);
+                    ScoringResult probe = _run.EvaluatePlacement(cell, value, _run.PlacedThisTurn);
                     if (probe.Total > bestScore)
                     {
                         bestScore = probe.Total;
