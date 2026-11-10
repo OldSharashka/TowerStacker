@@ -133,7 +133,9 @@ namespace Tower.Unity.View
 
             if (Input.GetMouseButtonUp(0))
             {
-                bool clicked = _pressed && !_dragged && _pressedCell >= 0;
+                bool wasPressed = _pressed;
+                bool wasDragged = _dragged;
+                bool clicked = wasPressed && !wasDragged && _pressedCell >= 0;
                 int cell = _pressedCell;
 
                 _pressed = false;
@@ -141,6 +143,7 @@ namespace Tower.Unity.View
                 _pressedCell = -1;
 
                 if (clicked) TryPlace(cell);
+                else Debug.Log($"[Tower] 松开但没落子：pressed={wasPressed} dragged={wasDragged} cell={cell}");
             }
         }
 
@@ -173,6 +176,7 @@ namespace Tower.Unity.View
 
         private void TryPlace(int cellId)
         {
+            Debug.Log($"[Tower] 点击 cell={cellId} 阶段={_run.Phase} 已放={_run.PlacedThisTurn}/{_run.Dice.Count} 当前面={_run.CurrentFace} 目标格所属={Tower.Core.Board.FaceOf(cellId)}");
             try
             {
                 if (!_run.State.IsEmpty(cellId))
@@ -187,6 +191,7 @@ namespace Tower.Unity.View
                 }
 
                 _run.Place(cellId);
+                Debug.Log($"[Tower] 落子成功 cell={cellId} → 回合 {_run.State.TurnIndex + 1}，分数 {_run.State.TotalScore}，阶段 {_run.Phase}");
             }
             catch (InvalidOperationException ex)
             {
@@ -351,6 +356,7 @@ namespace Tower.Unity.View
             GUILayout.Label($"回合 {_run.State.TurnIndex + 1}/18    轮 {_run.State.RoundIndex + 1}/3", style);
             GUILayout.Label($"分数 <b>{_run.State.TotalScore}</b> / {_run.State.TargetScore}", style);
             GUILayout.Label($"区域 <b>{_run.CurrentFace}</b>    重掷 {_run.RerollsLeft}", style);
+            GUILayout.Label($"阶段 {_run.Phase}    已放 {_run.PlacedThisTurn}/{_run.Dice.Count}", style);
 
             if (_run.Phase == TurnPhase.Placing)
             {

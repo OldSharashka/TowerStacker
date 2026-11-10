@@ -192,7 +192,9 @@ namespace Tower.Unity.View
             {
                 new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(1f, 0f), new Vector2(0f, 0f),
             });
-            mesh.SetTriangles(new[] { 0, 1, 2, 0, 2, 3 }, 0);
+            // 绕序必须是「从球外看是逆时针」：v0(左上) → v2(右下) → v1(右上)，
+            // 这样面法线朝外。写反了会导致正面被剔除、看到球的内部，射线也会穿到背面去。
+            mesh.SetTriangles(new[] { 0, 2, 1, 0, 3, 2 }, 0);
             mesh.RecalculateBounds();
             return mesh;
         }
