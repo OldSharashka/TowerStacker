@@ -34,21 +34,15 @@ namespace Tower.Unity.View
         [Tooltip("或者按住超过这个秒数也算进入拖拽（两个条件先到先算）")]
         public float dragHoldSeconds = 0.12f;
 
-        [Tooltip("调试开关：允许直接点击空格落子（默认关，正式交互是从托盘拖）")]
-        public bool clickToPlaceForDebug;
-
-        [Tooltip("拖动中可放置格的悬停色")]
+        [Tooltip("拖动/悬停可放置格的提示色")]
         public Color hoverColor = new Color(0.55f, 0.92f, 0.95f);
 
-        [Tooltip("点击选中格的颜色")]
-        public Color selectedColor = new Color(1f, 0.82f, 0.25f);
+        private const float PopupInterval = 0.05f;
 
         private TowerRun _run;
         private BoardTopology _topology;
         private DiceTrayView _tray;
         private DragGhostView _ghost;
-
-        private readonly bool[] _rerollSelected = new bool[3];
 
         private enum PointerMode
         {
@@ -58,23 +52,37 @@ namespace Tower.Unity.View
             Dragging,
         }
 
+        /// <summary>回合切换要等最后一次落子的飘字播完，这里记「什么时候才能切」。</summary>
+        private enum PendingKind
+        {
+            None,
+            NextTurn,
+            Settle,
+        }
+
         private PointerMode _mode;
         private Vector2 _pressPos;
         private Vector2 _lastMouse;
         private float _pressTime;
         private bool _sphereMoved;
-        private int _pressedCell = -1;
         private int _dragDie = -1;
         private int _hoverCell = -1;
         private bool _hoverValid;
         private int _hoverScore;
         private int _previewCell = -1;
-        private int _selectedCell = -1;
-        private int _selectedScore;
+
+        private PendingKind _pendingKind;
+        private float _pendingAt;
+
+        // 等飘字期间，HUD 还应该显示刚打完的那一回合（Core 已经切到下一回合了）
+        private FaceId _lastFace;
+        private int[] _lastDice = new int[0];
 
         private readonly List<Floating> _floatings = new List<Floating>();
         private string _message = string.Empty;
         private float _messageUntil;
+
+        private float PopupLife => slowPopups ? 2f : 0.42f;
 
         private sealed class Floating
         {
@@ -126,9 +134,10 @@ namespace Tower.Unity.View
         {
             UnsubscribeRun();
             CancelPointer();
-            ClearSelection();
-            ClearRerollSelection();
+            ClearHover();
             ClearFloating();
+            _pendingKind = PendingKind.None;
+            _pendingAt = 0f;
             _message = string.Empty;
 
             _topology = BoardTopology.Build();
@@ -147,6 +156,7 @@ namespace Tower.Unity.View
         {
             if (_run == null) return;
 
+            TickPendingTurn();
             HandlePointer();
             HandleKeys();
             AnimateFloating(Time.deltaTime);
@@ -156,10 +166,15 @@ namespace Tower.Unity.View
         // 输入：按下位置分流（文档 3.7.1）
         // ------------------------------------------------------------------
 
+        private bool IsInputLocked()
+        {
+            return _pendingKind != PendingKind.None || (Spin != null && Spin.IsTransitioning);
+        }
+
         private void HandlePointer()
         {
-            // 转场中锁输入：拖到一半进入转场也不会残留 Ghost
-            if (Spin != null && Spin.IsTransitioning)
+            // 转场中、或"等飘字播完再进下一回合"的间隙：锁输入
+            if (IsInputLocked())
             {
                 if (_mode != PointerMode.None || _previewCell >= 0) CancelPointer();
                 return;
@@ -182,7 +197,10 @@ namespace Tower.Unity.View
             if (Input.GetMouseButtonUp(0))
             {
                 OnRelease();
+                return;
             }
+
+            UpdateMouseHover(mouse);
         }
 
         private void OnPress(Vector2 mouse)
@@ -191,7 +209,6 @@ namespace Tower.Unity.View
             _lastMouse = mouse;
             _pressTime = Time.unscaledTime;
             _sphereMoved = false;
-            _pressedCell = -1;
             _dragDie = -1;
             _mode = PointerMode.None;
 
@@ -209,8 +226,8 @@ namespace Tower.Unity.View
                 if (_tray.Contains(mouse)) return;
             }
 
+            // 球面上按下：拖动就是转球，不动就什么也不做（没有点击选中）
             _mode = PointerMode.SpherePress;
-            _pressedCell = PickCell();
         }
 
         private void OnHold(Vector2 mouse)
@@ -256,38 +273,25 @@ namespace Tower.Unity.View
             int die = _dragDie;
             int cell = _hoverCell;
             bool valid = _hoverValid;
-            bool sphereMoved = _sphereMoved;
-            int pressedCell = _pressedCell;
 
             ResetPointerState();
 
-            switch (mode)
+            if (mode != PointerMode.Dragging) return;
+
+            if (valid && cell >= 0)
             {
-                case PointerMode.Dragging:
-                    if (valid && cell >= 0)
-                    {
-                        ClearHoverHighlight();
-                        PlaceAt(cell);
-                        if (_ghost != null) _ghost.Hide();
-                    }
-                    else
-                    {
-                        if (_ghost != null)
-                        {
-                            if (_tray != null) _ghost.FlyBack(_tray.SlotScreenPosition(die));
-                            else _ghost.Hide();
-                        }
-                        ShowMessage("只能放在当前区域的空格里");
-                    }
-                    break;
-
-                case PointerMode.DiePress:
-                    if (die >= 0) HandleDieClick(die);
-                    break;
-
-                case PointerMode.SpherePress:
-                    if (!sphereMoved && pressedCell >= 0) HandleCellClick(pressedCell);
-                    break;
+                ClearHoverHighlight();
+                PlaceAt(cell);
+                if (_ghost != null) _ghost.Hide();
+            }
+            else
+            {
+                if (_ghost != null)
+                {
+                    if (_tray != null) _ghost.FlyBack(_tray.SlotScreenPosition(die));
+                    else _ghost.Hide();
+                }
+                ShowMessage("只能放在当前区域的空格里");
             }
         }
 
@@ -297,7 +301,6 @@ namespace Tower.Unity.View
             if (_dragDie != _run.PlacedThisTurn) return;
 
             _mode = PointerMode.Dragging;
-            ClearSelection();
 
             if (_ghost != null)
             {
@@ -318,24 +321,80 @@ namespace Tower.Unity.View
                          && _run.State.IsEmpty(cell)
                          && Board.FaceOf(cell) == _run.CurrentFace;
 
-            _hoverValid = valid;
-            _hoverCell = valid ? cell : -1;
-            _hoverScore = valid ? PreviewScoreFor(cell) : 0;
-
-            if (_ghost != null) _ghost.SetValid(valid || cell < 0);
-
             if (valid)
             {
-                if (_previewCell != cell)
-                {
-                    _previewCell = cell;
-                    if (Planet != null) Planet.PreviewCell(cell, hoverColor);
-                }
+                _hoverValid = true;
+                _hoverCell = cell;
+                _hoverScore = PreviewScoreFor(cell);
+                SetPreview(cell, hoverColor);
             }
             else
             {
+                _hoverValid = false;
+                _hoverCell = -1;
+                _hoverScore = 0;
                 ClearHoverHighlight();
             }
+
+            if (_ghost != null) _ghost.SetValid(valid || cell < 0);
+        }
+
+        /// <summary>没按鼠标时，鼠标悬停在可放置格上就给高亮 + 预览。</summary>
+        private void UpdateMouseHover(Vector2 mouse)
+        {
+            if (_run.Phase != TurnPhase.Placing || _run.PlacedThisTurn >= _run.Dice.Count)
+            {
+                ClearHover();
+                return;
+            }
+
+            if (_tray != null && _tray.Contains(mouse))
+            {
+                ClearHover();
+                return;
+            }
+
+            int cell = PickCell(mouse);
+            bool valid = cell >= 0
+                         && _run.State.IsEmpty(cell)
+                         && Board.FaceOf(cell) == _run.CurrentFace;
+
+            if (!valid)
+            {
+                ClearHover();
+                return;
+            }
+
+            _hoverCell = cell;
+            _hoverValid = true;
+
+            if (_previewCell != cell)
+            {
+                _hoverScore = PreviewScoreFor(cell);
+                SetPreview(cell, hoverColor);
+            }
+        }
+
+        private void ClearHover()
+        {
+            _hoverValid = false;
+            _hoverCell = -1;
+            _hoverScore = 0;
+            ClearHoverHighlight();
+        }
+
+        /// <summary>只高亮一格；换格时先把上一格恢复成区域底色，避免留下色块。</summary>
+        private void SetPreview(int cellId, Color color)
+        {
+            if (_previewCell == cellId) return;
+
+            if (Planet != null)
+            {
+                if (_previewCell >= 0) Planet.ClearPreview();
+                Planet.PreviewCell(cellId, color);
+            }
+
+            _previewCell = cellId;
         }
 
         private void ClearHoverHighlight()
@@ -357,14 +416,13 @@ namespace Tower.Unity.View
         {
             _mode = PointerMode.None;
             _dragDie = -1;
-            _pressedCell = -1;
             _hoverCell = -1;
             _hoverValid = false;
             _hoverScore = 0;
         }
 
         // ------------------------------------------------------------------
-        // 落子 / 选中 / 重掷
+        // 落子 / 重掷
         // ------------------------------------------------------------------
 
         private void PlaceAt(int cellId)
@@ -379,75 +437,10 @@ namespace Tower.Unity.View
             }
         }
 
-        /// <summary>球面上点一下：选中/取消选中一个可放置格，并显示这一手值几分。</summary>
-        private void HandleCellClick(int cellId)
-        {
-            if (_run.Phase != TurnPhase.Placing) return;
-            if (_run.PlacedThisTurn >= _run.Dice.Count) return;
-
-            if (!_run.State.IsEmpty(cellId))
-            {
-                ClearSelection();
-                ShowMessage("这一格已经有数字了");
-                return;
-            }
-
-            if (Board.FaceOf(cellId) != _run.CurrentFace)
-            {
-                ClearSelection();
-                ShowMessage($"只能放在当前区域（{_run.CurrentFace}）");
-                return;
-            }
-
-            if (clickToPlaceForDebug)
-            {
-                PlaceAt(cellId);
-                return;
-            }
-
-            if (_selectedCell == cellId)
-            {
-                ClearSelection();
-                return;
-            }
-
-            ClearSelection();
-            _selectedCell = cellId;
-            _selectedScore = PreviewScoreFor(cellId);
-            if (Planet != null) Planet.PreviewCell(cellId, selectedColor);
-            ShowMessage($"已选中：放到这里得 +{_selectedScore}（再点一次取消）");
-        }
-
-        private void ClearSelection()
-        {
-            if (_selectedCell >= 0 && Planet != null) Planet.ClearPreview();
-            _selectedCell = -1;
-            _selectedScore = 0;
-        }
-
-        private void HandleDieClick(int dieIndex)
-        {
-            if (_run.Phase != TurnPhase.Placing) return;
-
-            if (_run.RerollsLeft <= 0)
-            {
-                ShowMessage("本回合已经重掷过了");
-                return;
-            }
-            if (_run.PlacedThisTurn > 0)
-            {
-                ShowMessage("已经开始放置，本回合不能再重掷");
-                return;
-            }
-
-            _rerollSelected[dieIndex] = !_rerollSelected[dieIndex];
-            RefreshTray();
-        }
-
         private void OnRerollClicked()
         {
             if (_run == null || _run.Phase != TurnPhase.Placing) return;
-            if (_mode == PointerMode.Dragging) return;   // 拖拽期间锁死重掷
+            if (IsInputLocked() || _mode == PointerMode.Dragging) return;
 
             if (_run.RerollsLeft <= 0)
             {
@@ -460,40 +453,17 @@ namespace Tower.Unity.View
                 return;
             }
 
-            int mask = RerollMask();
-            if (mask == 0)
+            if (_run.Reroll(0b111))
             {
-                ShowMessage("先点选要重掷的骰子（或按 R 全掷）");
-                return;
-            }
-
-            if (_run.Reroll(mask))
-            {
-                ClearRerollSelection();
                 RefreshTray();
                 ShowMessage("重掷完成");
             }
         }
 
-        private int RerollMask()
-        {
-            int mask = 0;
-            for (int i = 0; i < _rerollSelected.Length; i++)
-            {
-                if (_rerollSelected[i]) mask |= 1 << i;
-            }
-            return mask;
-        }
-
-        private void ClearRerollSelection()
-        {
-            for (int i = 0; i < _rerollSelected.Length; i++) _rerollSelected[i] = false;
-        }
-
         private void RefreshTray()
         {
             if (_tray == null || _run == null) return;
-            _tray.Refresh(_run, _rerollSelected);
+            _tray.Refresh(_run);
         }
 
         private int PreviewScoreFor(int cellId)
@@ -526,26 +496,13 @@ namespace Tower.Unity.View
         {
             if (_run == null) return;
 
-            if (Input.GetKeyDown(KeyCode.Escape))
-            {
-                CancelPointer();
-                ClearSelection();
-            }
+            if (Input.GetKeyDown(KeyCode.Escape)) CancelPointer();
 
             if (Input.GetKeyDown(KeyCode.R) && _run.Phase == TurnPhase.Placing
-                && _mode != PointerMode.Dragging)
+                && !IsInputLocked() && _mode != PointerMode.Dragging)
             {
-                int mask = RerollMask();
-                if (mask == 0) mask = 0b111;
-                if (_run.Reroll(mask))
-                {
-                    ClearRerollSelection();
-                    RefreshTray();
-                }
-                else
-                {
-                    ShowMessage("本回合不能重掷（已经重掷过，或已经开始放置）");
-                }
+                if (_run.Reroll(0b111)) RefreshTray();
+                else ShowMessage("本回合不能重掷（已经重掷过，或已经开始放置）");
             }
 
             if (Input.GetKeyDown(KeyCode.N)) NewRun();
@@ -558,31 +515,44 @@ namespace Tower.Unity.View
         private void OnTurnStarted(TowerRun run)
         {
             CancelPointer();
-            ClearSelection();
-            ClearRerollSelection();
+            ClearHover();
 
-            if (Planet != null) Planet.HighlightRegion(run.CurrentFace);
-            if (Spin != null) Spin.FocusFace(run.CurrentFace, Cam);
+            // 上一手飘字还没播完：画面先停在旧区域，TickPendingTurn 到点再转
+            if (_pendingKind == PendingKind.NextTurn) return;
+
+            BeginTurnVisuals();
+        }
+
+        private void BeginTurnVisuals()
+        {
+            if (_run == null || _run.Phase == TurnPhase.RunEnded) return;
+
+            if (Planet != null) Planet.HighlightRegion(_run.CurrentFace);
+            if (Spin != null) Spin.FocusFace(_run.CurrentFace, Cam);
 
             RefreshTray();
-            ShowMessage($"第 {run.State.TurnIndex + 1} 回合 · {run.CurrentFace} 区域");
+            ShowMessage($"第 {_run.State.TurnIndex + 1} 回合 · {_run.CurrentFace} 区域");
         }
 
         private void OnPlaced(PlacementResult result)
         {
+            // 先记下这一回合的画面信息：飘字播完之前，HUD 还停在它上面
+            _lastFace = _run.CurrentFace;
+            _lastDice = new int[_run.Dice.Count];
+            for (int i = 0; i < _lastDice.Length; i++) _lastDice[i] = _run.Dice[i];
+
             if (Planet != null)
             {
                 Planet.SetCellValue(result.CellId, result.Value);
                 Planet.HighlightRegion(_run.CurrentFace);
             }
 
-            ClearSelection();
             RefreshTray();
 
             // 逐个邻居跳出得分：顺序由 Core 给出（固定），间隔 0.05s
             // 注意：不在落子格上再弹「本手合计」——那一格本身不产分，弹了会被读成“这格也加分”。
-            // 本手总分看 HUD 的「分数」变化即可（阶段二会补正式的事件日志/结算面板）。
             float delay = 0f;
+            int count = result.Contributions.Count;
             foreach (ScoreContribution contribution in result.Contributions)
             {
                 CellView source = Planet != null ? Planet.GetCell(contribution.SourceCellId) : null;
@@ -590,19 +560,52 @@ namespace Tower.Unity.View
 
                 SpawnFloating(source.Face.bounds.center, $"+{contribution.Amount}",
                     new Color(1f, 0.93f, 0.65f), delay);
-                delay += 0.05f;
+                delay += PopupInterval;
+            }
+
+            // 三颗都放完：等最后一次的 +N 播完，再切下一回合（或出结算）
+            if (result.TurnCompleted)
+            {
+                float lastStart = count > 0 ? (count - 1) * PopupInterval : 0f;
+                float wait = lastStart + PopupLife + 0.08f;
+                if (wait < 0.2f) wait = 0.2f;
+
+                bool lastTurn = _run.State.TurnIndex + 1 >= _run.Settings.TurnsPerRun;
+                _pendingKind = lastTurn ? PendingKind.Settle : PendingKind.NextTurn;
+                _pendingAt = Time.unscaledTime + wait;
             }
         }
 
         private void OnRunFinished(TowerRun run)
         {
-            string verdict = run.IsSuccess ? "达标" : "未达标";
-            ShowMessage($"结算：{run.State.TotalScore} / {run.State.TargetScore}  {verdict}", 30f);
+            CancelPointer();
+            ClearHover();
+
+            if (_pendingKind == PendingKind.Settle) return;
+            ApplyRunEnd();
+        }
+
+        private void ApplyRunEnd()
+        {
+            if (_run == null) return;
+
+            string verdict = _run.IsSuccess ? "达标" : "未达标";
+            ShowMessage($"结算：{_run.State.TotalScore} / {_run.State.TargetScore}  {verdict}", 30f);
             if (Planet != null) Planet.HighlightRegion(null);
 
-            CancelPointer();
-            ClearSelection();
             RefreshTray();
+        }
+
+        private void TickPendingTurn()
+        {
+            if (_pendingKind == PendingKind.None) return;
+            if (Time.unscaledTime < _pendingAt) return;
+
+            PendingKind kind = _pendingKind;
+            _pendingKind = PendingKind.None;
+
+            if (kind == PendingKind.NextTurn) BeginTurnVisuals();
+            else ApplyRunEnd();
         }
 
         // ------------------------------------------------------------------
@@ -635,7 +638,7 @@ namespace Tower.Unity.View
                 Text = tmp,
                 Origin = worldPos,
                 Delay = delay,
-                Life = slowPopups ? 2f : 0.42f,
+                Life = PopupLife,
                 BaseColor = color,
             });
         }
@@ -723,6 +726,18 @@ namespace Tower.Unity.View
         private GUIStyle _panel;
         private GUIStyle _center;
 
+        private static string PhaseLabel(TurnPhase phase)
+        {
+            switch (phase)
+            {
+                case TurnPhase.NotStarted: return "未开始";
+                case TurnPhase.Placing: return "放置中";
+                case TurnPhase.TurnEnded: return "回合结束";
+                case TurnPhase.RunEnded: return "已结算";
+                default: return phase.ToString();
+            }
+        }
+
         private void OnGUI()
         {
             if (_run == null) return;
@@ -740,14 +755,22 @@ namespace Tower.Unity.View
                 };
             }
 
+            // 等飘字的那一小段：画面和 HUD 都还停在刚打完的回合，别提前跳到下一回合
+            bool pending = _pendingKind != PendingKind.None;
+            int turnNumber = pending ? Mathf.Max(1, _run.State.TurnIndex) : _run.State.TurnIndex + 1;
+            int roundNumber = (turnNumber - 1) / _run.Settings.TurnsPerRound + 1;
+            FaceId faceShown = pending ? _lastFace : _run.CurrentFace;
+            int placedShown = pending ? _lastDice.Length : _run.PlacedThisTurn;
+            int diceCount = pending ? _lastDice.Length : _run.Dice.Count;
+
             GUILayout.BeginArea(new Rect(10, 10, 292, 206), _panel);
             GUILayout.Label("<b>高塔堆叠者</b> · 白盒", _style);
-            GUILayout.Label($"回合 {_run.State.TurnIndex + 1}/{_run.Settings.TurnsPerRun}    轮 {_run.State.RoundIndex + 1}/{_run.Settings.RoundsPerRun}", _style);
+            GUILayout.Label($"回合 {turnNumber}/{_run.Settings.TurnsPerRun}    轮 {roundNumber}/{_run.Settings.RoundsPerRun}", _style);
             GUILayout.Label($"分数 <b>{_run.State.TotalScore}</b> / {_run.State.TargetScore}", _style);
-            GUILayout.Label($"区域 <b>{_run.CurrentFace}</b>    重掷 {_run.RerollsLeft}", _style);
-            GUILayout.Label($"阶段 {_run.Phase}    已放 {_run.PlacedThisTurn}/{_run.Dice.Count}", _style);
+            GUILayout.Label($"区域 <b>{faceShown}</b>    重掷 {_run.RerollsLeft}", _style);
+            GUILayout.Label($"阶段 {(pending ? "回合结束" : PhaseLabel(_run.Phase))}    已放 {placedShown}/{diceCount}", _style);
 
-            if (_run.Phase == TurnPhase.Placing)
+            if (_run.Phase == TurnPhase.Placing && !pending)
             {
                 var dice = new System.Text.StringBuilder("骰子 ");
                 for (int i = 0; i < _run.Dice.Count; i++)
@@ -762,9 +785,9 @@ namespace Tower.Unity.View
                         ? $"预览：放到这里 <b>+{_hoverScore}</b>"
                         : "<color=#ff9a8a>这里不能放（空格 · 当前区域）</color>", _style);
                 }
-                else if (_selectedCell >= 0)
+                else if (_hoverValid)
                 {
-                    GUILayout.Label($"已选中：<b>+{_selectedScore}</b>（再点一次取消）", _style);
+                    GUILayout.Label($"预览：放到这里 <b>+{_hoverScore}</b>", _style);
                 }
                 else
                 {
@@ -772,6 +795,10 @@ namespace Tower.Unity.View
                 }
 
                 GUILayout.Label("R 重掷　N 重开　Esc 取消", _style);
+            }
+            else if (pending)
+            {
+                GUILayout.Label(_run.Phase == TurnPhase.RunEnded ? "得分显示完就出结算" : "得分显示完就进下一回合", _style);
             }
             else if (_run.Phase == TurnPhase.RunEnded)
             {

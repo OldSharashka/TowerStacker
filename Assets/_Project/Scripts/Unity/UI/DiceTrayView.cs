@@ -41,7 +41,6 @@ namespace Tower.Unity.View
         private static readonly Color TextLight = new Color(0.84f, 0.86f, 0.90f);
         private static readonly Color TextDim = new Color(0.40f, 0.42f, 0.47f);
         private static readonly Color BorderCurrent = new Color(1f, 1f, 1f, 0.55f);
-        private static readonly Color BorderSelected = new Color(1f, 0.82f, 0.25f, 1f);
         private static readonly Color BorderNone = new Color(0f, 0f, 0f, 0f);
         private static readonly Color ButtonColor = new Color(0.22f, 0.24f, 0.31f);
 
@@ -113,8 +112,8 @@ namespace Tower.Unity.View
                 TextAlignmentOptions.Center);
         }
 
-        /// <summary>按当前局状态刷新三个骰位与按钮。selected 是「待重掷」的勾选状态。</summary>
-        public void Refresh(TowerRun run, bool[] selected)
+        /// <summary>按当前局状态刷新三个骰位与按钮。</summary>
+        public void Refresh(TowerRun run)
         {
             if (run == null || _header == null) return;
 
@@ -130,13 +129,12 @@ namespace Tower.Unity.View
                 bool hasDie = i < run.Dice.Count;
                 bool used = !hasDie || i < current || run.IsFinished;
                 bool isCurrent = placing && hasDie && i == current;
-                bool isSelected = !used && selected != null && i < selected.Length && selected[i];
 
                 _bodies[i].color = used ? BodyUsed : (isCurrent ? BodyCurrent : BodyPending);
                 _texts[i].text = hasDie ? run.Dice[i].ToString() : "-";
                 _texts[i].color = used ? TextDim : TextDark;
-                _texts[i].fontStyle = isCurrent || isSelected ? FontStyles.Bold : FontStyles.Normal;
-                _borders[i].color = isSelected ? BorderSelected : (isCurrent ? BorderCurrent : BorderNone);
+                _texts[i].fontStyle = isCurrent ? FontStyles.Bold : FontStyles.Normal;
+                _borders[i].color = isCurrent ? BorderCurrent : BorderNone;
             }
 
             bool canReroll = placing && current == 0 && run.RerollsLeft > 0;
