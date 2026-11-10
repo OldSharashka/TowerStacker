@@ -1,9 +1,9 @@
 {
   "dependencies": {
     "com.coplaydev.unity-mcp": {
-      "version": "file:F:/Desk/unity-mcp-beta/MCPForUnity",
+      "version": "file:MCPForUnity",
       "depth": 0,
-      "source": "local",
+      "source": "embedded",
       "dependencies": {
         "com.unity.modules.animation": "1.0.0",
         "com.unity.modules.imageconversion": "1.0.0",
