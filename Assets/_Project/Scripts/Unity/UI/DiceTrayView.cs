@@ -117,7 +117,8 @@ namespace Tower.Unity.View
         {
             if (run == null || _header == null) return;
 
-            _header.text = $"{run.CurrentFace.ToString().ToUpperInvariant()}   TURN {run.State.TurnIndex + 1}/{run.Settings.TurnsPerRun}";
+            int turnNumber = Mathf.Clamp(run.State.TurnIndex + 1, 1, run.Settings.TurnsPerRun);
+            _header.text = $"{run.CurrentFace.ToString().ToUpperInvariant()}   TURN {turnNumber}/{run.Settings.TurnsPerRun}";
 
             bool placing = run.Phase == TurnPhase.Placing;
             int current = run.PlacedThisTurn;

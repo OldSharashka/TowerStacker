@@ -77,8 +77,7 @@ namespace Tower.Unity.View
         public static TextMeshProUGUI CreateText(
             Transform parent, string name, string content,
             float fontSize, Color color, TextAlignmentOptions alignment)
-        {
-            var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
+        {            var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
             var rt = go.GetComponent<RectTransform>();
             rt.SetParent(parent, false);
             rt.anchorMin = Vector2.zero;
@@ -93,6 +92,54 @@ namespace Tower.Unity.View
             text.alignment = alignment;
             text.raycastTarget = false;
             text.enableWordWrapping = false;
+            return text;
+        }
+
+        private static Font _uiFont;
+
+        /// <summary>
+        /// HUD 用的中文字体：TMP 默认字体没有中文字形，白盒阶段先走系统动态字体。
+        /// 找不到系统字体时退回 Unity 内置字体（那样中文会缺字，但不会崩）。
+        /// </summary>
+        public static Font UiFont
+        {
+            get
+            {
+                if (_uiFont != null) return _uiFont;
+
+                _uiFont = Font.CreateDynamicFontFromOSFont(
+                    new[] { "Microsoft YaHei", "Microsoft YaHei UI", "SimHei", "SimSun", "Arial" }, 24);
+
+                if (_uiFont == null) _uiFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+                if (_uiFont == null) _uiFont = Resources.GetBuiltinResource<Font>("Arial.ttf");
+                return _uiFont;
+            }
+        }
+
+        /// <summary>uGUI 传统 Text（支持中文动态字形），锚点默认左上。</summary>
+        public static Text CreateLabel(
+            Transform parent, string name, string content,
+            int fontSize, Color color, TextAnchor alignment,
+            Vector2 anchoredPosition, Vector2 size)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+            var rt = go.GetComponent<RectTransform>();
+            rt.SetParent(parent, false);
+            rt.anchorMin = new Vector2(0f, 1f);
+            rt.anchorMax = new Vector2(0f, 1f);
+            rt.pivot = new Vector2(0f, 1f);
+            rt.anchoredPosition = anchoredPosition;
+            rt.sizeDelta = size;
+
+            var text = go.GetComponent<Text>();
+            text.font = UiFont;
+            text.text = content;
+            text.fontSize = fontSize;
+            text.color = color;
+            text.alignment = alignment;
+            text.raycastTarget = false;
+            text.horizontalOverflow = HorizontalWrapMode.Overflow;
+            text.verticalOverflow = VerticalWrapMode.Overflow;
             return text;
         }
     }

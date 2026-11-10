@@ -43,6 +43,8 @@ namespace Tower.Unity.View
         private BoardTopology _topology;
         private DiceTrayView _tray;
         private DragGhostView _ghost;
+        private HudView _hud;
+        private ResultPanelView _result;
 
         private enum PointerMode
         {
@@ -109,6 +111,10 @@ namespace Tower.Unity.View
                 _tray = DiceTrayView.Create(canvas.transform);
                 _tray.RerollClicked += OnRerollClicked;
                 _ghost = DragGhostView.Create(canvas.transform);
+                _hud = HudView.Create(canvas.transform);
+                _result = ResultPanelView.Create(canvas.transform);
+                _result.RestartSameClicked += RestartSameSeed;
+                _result.RestartNewClicked += RestartNewSeed;
             }
 
             NewRun();
@@ -119,6 +125,11 @@ namespace Tower.Unity.View
         private void OnDestroy()
         {
             if (_tray != null) _tray.RerollClicked -= OnRerollClicked;
+            if (_result != null)
+            {
+                _result.RestartSameClicked -= RestartSameSeed;
+                _result.RestartNewClicked -= RestartNewSeed;
+            }
             UnsubscribeRun();
         }
 
@@ -140,6 +151,14 @@ namespace Tower.Unity.View
             _pendingAt = 0f;
             _message = string.Empty;
 
+            if (_result != null) _result.Hide();
+            if (_hud != null)
+            {
+                _hud.ClearLog();
+                _hud.SetMessage(string.Empty);
+                _hud.PushLog("新开一局");
+            }
+
             _topology = BoardTopology.Build();
             var settings = new RunSettings { TargetScore = TargetScore };
 
@@ -152,6 +171,19 @@ namespace Tower.Unity.View
             _run.Start();
         }
 
+        /// <summary>结算面板：原种子重开。</summary>
+        public void RestartSameSeed()
+        {
+            NewRun();
+        }
+
+        /// <summary>结算面板：换一个种子重开。</summary>
+        public void RestartNewSeed()
+        {
+            Seed = (ulong)System.DateTime.Now.Ticks;
+            NewRun();
+        }
+
         private void Update()
         {
             if (_run == null) return;
@@ -160,6 +192,7 @@ namespace Tower.Unity.View
             HandlePointer();
             HandleKeys();
             AnimateFloating(Time.deltaTime);
+            UpdateHudText();
         }
 
         // ------------------------------------------------------------------
@@ -168,7 +201,9 @@ namespace Tower.Unity.View
 
         private bool IsInputLocked()
         {
-            return _pendingKind != PendingKind.None || (Spin != null && Spin.IsTransitioning);
+            return _pendingKind != PendingKind.None
+                   || (Spin != null && Spin.IsTransitioning)
+                   || (_result != null && _result.IsVisible);
         }
 
         private void HandlePointer()
@@ -462,8 +497,51 @@ namespace Tower.Unity.View
 
         private void RefreshTray()
         {
-            if (_tray == null || _run == null) return;
-            _tray.Refresh(_run);
+            if (_tray != null && _run != null) _tray.Refresh(_run);
+            RefreshHud();
+        }
+
+        private void RefreshHud()
+        {
+            if (_hud == null || _run == null) return;
+
+            bool pending = _pendingKind != PendingKind.None;
+            _hud.Refresh(_run, pending, _lastFace, _lastDice.Length);
+        }
+
+        /// <summary>底部提示行：拖拽预览 / 悬停预览 / 等待转场 / 空闲。</summary>
+        private void UpdateHudText()
+        {
+            if (_hud == null || _run == null) return;
+
+            string hint;
+            if (_pendingKind == PendingKind.Settle)
+            {
+                hint = "得分显示完就出结算";
+            }
+            else if (_pendingKind == PendingKind.NextTurn)
+            {
+                hint = "得分显示完就进下一回合";
+            }
+            else if (_run.Phase == TurnPhase.RunEnded)
+            {
+                hint = $"本局结束：{_run.State.TotalScore} / {_run.State.TargetScore}";
+            }
+            else if (_mode == PointerMode.Dragging)
+            {
+                hint = _hoverValid ? $"预览：放到这里 +{_hoverScore}" : "这里不能放（空格 · 当前区域）";
+            }
+            else if (_hoverValid)
+            {
+                hint = $"预览：放到这里 +{_hoverScore}";
+            }
+            else
+            {
+                hint = "拖左下角的骰子到格子里";
+            }
+
+            _hud.SetHint(hint);
+            _hud.SetMessage(Time.unscaledTime < _messageUntil ? _message : string.Empty);
         }
 
         private int PreviewScoreFor(int cellId)
@@ -532,6 +610,7 @@ namespace Tower.Unity.View
 
             RefreshTray();
             ShowMessage($"第 {_run.State.TurnIndex + 1} 回合 · {_run.CurrentFace} 区域");
+            if (_hud != null) _hud.PushLog($"第 {_run.State.TurnIndex + 1} 回合 · {_run.CurrentFace}");
         }
 
         private void OnPlaced(PlacementResult result)
@@ -548,7 +627,10 @@ namespace Tower.Unity.View
             }
 
             RefreshTray();
-
+            if (_hud != null)
+            {
+                _hud.PushLog($"落子 {result.Value} → +{result.Score}");
+            }
             // 逐个邻居跳出得分：顺序由 Core 给出（固定），间隔 0.05s
             // 注意：不在落子格上再弹「本手合计」——那一格本身不产分，弹了会被读成“这格也加分”。
             float delay = 0f;
@@ -589,11 +671,29 @@ namespace Tower.Unity.View
         {
             if (_run == null) return;
 
-            string verdict = _run.IsSuccess ? "达标" : "未达标";
-            ShowMessage($"结算：{_run.State.TotalScore} / {_run.State.TargetScore}  {verdict}", 30f);
             if (Planet != null) Planet.HighlightRegion(null);
-
             RefreshTray();
+
+            int bestScore = 0;
+            int bestTurn = 1;
+            foreach (TurnRecord record in _run.State.History)
+            {
+                if (record.Score > bestScore)
+                {
+                    bestScore = record.Score;
+                    bestTurn = record.TurnIndex + 1;
+                }
+            }
+
+            if (_result != null)
+            {
+                _result.Show(_run.State.TotalScore, _run.State.TargetScore, _run.IsSuccess, bestScore, bestTurn);
+            }
+
+            if (_hud != null)
+            {
+                _hud.PushLog($"结算 {_run.State.TotalScore}/{_run.State.TargetScore} · {(_run.IsSuccess ? "达标" : "未达标")}");
+            }
         }
 
         private void TickPendingTurn()
@@ -718,110 +818,5 @@ namespace Tower.Unity.View
             }
         }
 
-        // ------------------------------------------------------------------
-        // 临时 HUD（阶段二会换成正式 uGUI）
-        // ------------------------------------------------------------------
-
-        private GUIStyle _style;
-        private GUIStyle _panel;
-        private GUIStyle _center;
-
-        private static string PhaseLabel(TurnPhase phase)
-        {
-            switch (phase)
-            {
-                case TurnPhase.NotStarted: return "未开始";
-                case TurnPhase.Placing: return "放置中";
-                case TurnPhase.TurnEnded: return "回合结束";
-                case TurnPhase.RunEnded: return "已结算";
-                default: return phase.ToString();
-            }
-        }
-
-        private void OnGUI()
-        {
-            if (_run == null) return;
-
-            // 样式只建一次：OnGUI 每帧都跑，每帧 new 会产生大量垃圾
-            if (_style == null)
-            {
-                _style = new GUIStyle(GUI.skin.label) { fontSize = 12, richText = true };
-                _panel = new GUIStyle(GUI.skin.box) { alignment = TextAnchor.UpperLeft };
-                _center = new GUIStyle(GUI.skin.label)
-                {
-                    fontSize = 14,
-                    richText = true,
-                    alignment = TextAnchor.MiddleCenter,
-                };
-            }
-
-            // 等飘字的那一小段：画面和 HUD 都还停在刚打完的回合，别提前跳到下一回合
-            bool pending = _pendingKind != PendingKind.None;
-            int turnNumber = pending ? Mathf.Max(1, _run.State.TurnIndex) : _run.State.TurnIndex + 1;
-            int roundNumber = (turnNumber - 1) / _run.Settings.TurnsPerRound + 1;
-            FaceId faceShown = pending ? _lastFace : _run.CurrentFace;
-            int placedShown = pending ? _lastDice.Length : _run.PlacedThisTurn;
-            int diceCount = pending ? _lastDice.Length : _run.Dice.Count;
-
-            GUILayout.BeginArea(new Rect(10, 10, 292, 206), _panel);
-            GUILayout.Label("<b>高塔堆叠者</b> · 白盒", _style);
-            GUILayout.Label($"回合 {turnNumber}/{_run.Settings.TurnsPerRun}    轮 {roundNumber}/{_run.Settings.RoundsPerRun}", _style);
-            GUILayout.Label($"分数 <b>{_run.State.TotalScore}</b> / {_run.State.TargetScore}", _style);
-            GUILayout.Label($"区域 <b>{faceShown}</b>    重掷 {_run.RerollsLeft}", _style);
-            GUILayout.Label($"阶段 {(pending ? "回合结束" : PhaseLabel(_run.Phase))}    已放 {placedShown}/{diceCount}", _style);
-
-            if (_run.Phase == TurnPhase.Placing && !pending)
-            {
-                var dice = new System.Text.StringBuilder("骰子 ");
-                for (int i = 0; i < _run.Dice.Count; i++)
-                {
-                    dice.Append(i == _run.PlacedThisTurn ? $"[<b>{_run.Dice[i]}</b>] " : $"{_run.Dice[i]} ");
-                }
-                GUILayout.Label(dice.ToString(), _style);
-
-                if (_mode == PointerMode.Dragging)
-                {
-                    GUILayout.Label(_hoverValid
-                        ? $"预览：放到这里 <b>+{_hoverScore}</b>"
-                        : "<color=#ff9a8a>这里不能放（空格 · 当前区域）</color>", _style);
-                }
-                else if (_hoverValid)
-                {
-                    GUILayout.Label($"预览：放到这里 <b>+{_hoverScore}</b>", _style);
-                }
-                else
-                {
-                    GUILayout.Label("拖左下角的骰子到格子里", _style);
-                }
-
-                GUILayout.Label("R 重掷　N 重开　Esc 取消", _style);
-            }
-            else if (pending)
-            {
-                GUILayout.Label(_run.Phase == TurnPhase.RunEnded ? "得分显示完就出结算" : "得分显示完就进下一回合", _style);
-            }
-            else if (_run.Phase == TurnPhase.RunEnded)
-            {
-                GUILayout.Label(_run.IsSuccess ? "<color=#7f7>达标</color>" : "<color=#f77>未达标</color>", _style);
-                GUILayout.Label("N 重开", _style);
-            }
-
-            GUILayout.EndArea();
-
-            // 拖拽时在鼠标旁显示这一手值几分
-            if (_mode == PointerMode.Dragging)
-            {
-                Vector2 mouse = Input.mousePosition;
-                string hint = _hoverValid
-                    ? $"<b><color=#8ff0ff>+{_hoverScore}</color></b>"
-                    : "<color=#ff9a8a>不可放置</color>";
-                GUI.Label(new Rect(mouse.x + 26f, Screen.height - mouse.y - 28f, 220f, 28f), hint, _center);
-            }
-
-            if (!string.IsNullOrEmpty(_message) && Time.unscaledTime < _messageUntil)
-            {
-                GUI.Label(new Rect(Screen.width * 0.5f - 360f, Screen.height - 46f, 720f, 30f), _message, _center);
-            }
-        }
     }
 }
