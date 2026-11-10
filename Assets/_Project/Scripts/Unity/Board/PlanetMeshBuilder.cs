@@ -50,6 +50,7 @@ namespace Tower.Unity.View
         private readonly List<CellView> _cells = new List<CellView>(Board.CellCount);
         private readonly List<GameObject> _spawned = new List<GameObject>(Board.CellCount);
         private LineRenderer[] _frames;
+        private FaceId? _regionFace;
         private Material _material;
         private static readonly int ColorId = Shader.PropertyToID("_Color");
 
@@ -156,7 +157,9 @@ namespace Tower.Unity.View
                 line.sharedMaterial = mat;
 
                 FaceFrame frame = FaceFrames.Get((FaceId)face);
-                float h = 1f - faceGap + 0.05f;
+                // 框线要落在「面与面之间的缝」里：格子在 0.98 处收边，缝中线是 1.0，
+                // 取 0.99 既贴着格子又不压到邻面的格子（之前 +0.05 会压过去）。
+                float h = 1f - faceGap * 0.5f;
 
                 const int perSide = 12;
                 var points = new Vector3[perSide * 4];
@@ -374,6 +377,8 @@ namespace Tower.Unity.View
         /// <summary>把某个区域整片染色并亮框圈起来，帮助玩家看出「本回合是哪 9 格」。</summary>
         public void HighlightRegion(FaceId? face)
         {
+            _regionFace = face;
+
             if (_frames != null)
             {
                 for (int i = 0; i < _frames.Length; i++)
@@ -393,6 +398,19 @@ namespace Tower.Unity.View
                 bool inRegion = face.HasValue && Board.FaceOf(cell) == face.Value;
                 view.SetColor(inRegion ? regionTint : emptyColor);
             }
+        }
+
+        /// <summary>拖拽悬停 / 点击选中时，临时给单个格子换色（不动数字）。</summary>
+        public void PreviewCell(int cellId, Color color)
+        {
+            CellView view = GetCell(cellId);
+            if (view != null) view.SetColor(color);
+        }
+
+        /// <summary>撤掉临时高亮：按当前区域重新刷一遍空格。</summary>
+        public void ClearPreview()
+        {
+            HighlightRegion(_regionFace);
         }
 
         public void ResetAll()
