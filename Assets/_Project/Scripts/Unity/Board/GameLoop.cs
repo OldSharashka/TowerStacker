@@ -580,6 +580,8 @@ namespace Tower.Unity.View
             RefreshTray();
 
             // 逐个邻居跳出得分：顺序由 Core 给出（固定），间隔 0.05s
+            // 注意：不在落子格上再弹「本手合计」——那一格本身不产分，弹了会被读成“这格也加分”。
+            // 本手总分看 HUD 的「分数」变化即可（阶段二会补正式的事件日志/结算面板）。
             float delay = 0f;
             foreach (ScoreContribution contribution in result.Contributions)
             {
@@ -589,13 +591,6 @@ namespace Tower.Unity.View
                 SpawnFloating(source.Face.bounds.center, $"+{contribution.Amount}",
                     new Color(1f, 0.93f, 0.65f), delay);
                 delay += 0.05f;
-            }
-
-            if (result.Score > 0)
-            {
-                CellView target = Planet != null ? Planet.GetCell(result.CellId) : null;
-                Vector3 pos = target != null && target.Face != null ? target.Face.bounds.center : Vector3.zero;
-                SpawnFloating(pos, $"+{result.Score}", new Color(1f, 0.72f, 0.25f), delay + 0.05f);
             }
         }
 
