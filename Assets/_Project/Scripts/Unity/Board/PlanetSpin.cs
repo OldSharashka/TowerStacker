@@ -29,17 +29,32 @@ namespace Tower.Unity.View
             _targetRotation = transform.rotation;
         }
 
-        /// <summary>把指定面转到正对相机。</summary>
-        public void FocusFace(FaceId face)
+        /// <summary>
+        /// 把指定面转到「正对相机」：该面法线指向相机，且该面的"上"对齐相机的上。
+        /// 注意要按相机实际方向算，不能写死 -Z，否则相机不在轴上时看着是斜的。
+        /// </summary>
+        public void FocusFace(FaceId face, Camera cam)
         {
             FaceFrame frame = FaceFrames.Get(face);
             Vector3 normal = ToVector(frame.Normal);
-            Vector3 up = ToVector(frame.Up);
+            Vector3 faceUp = ToVector(frame.Up);
 
-            // 让该面法线朝向相机(-Z)、该面的"上"朝世界 +Y
-            Quaternion faceToWorld = Quaternion.LookRotation(-normal, up);
-            _targetRotation = Quaternion.Inverse(faceToWorld);
+            Vector3 toCamera = cam != null
+                ? (cam.transform.position - transform.position).normalized
+                : Vector3.back;
 
+            Vector3 upProj = cam != null
+                ? Vector3.ProjectOnPlane(cam.transform.up, toCamera)
+                : Vector3.up;
+
+            if (upProj.sqrMagnitude < 1e-4f) upProj = Vector3.up;
+            upProj.Normalize();
+
+            // S = 目标朝向 × 该面本地朝向的逆：把 normal→toCamera、faceUp→upProj
+            Quaternion faceToWorld = Quaternion.LookRotation(normal, faceUp);
+            Quaternion target = Quaternion.LookRotation(toCamera, upProj) * Quaternion.Inverse(faceToWorld);
+
+            _targetRotation = target;
             _startRotation = transform.rotation;
             _elapsed = 0f;
             _transitioning = true;

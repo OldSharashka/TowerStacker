@@ -24,8 +24,8 @@ namespace Tower.Unity.View
         [Tooltip(">0 时开局自动放 N 个回合（只用于截图与调试），0 = 手动")]
         public int AutoPlayTurns;
 
-        [Tooltip("调试用：把跳分飘字放慢到 3 秒，方便观察/截图")]
-        public bool slowPopups = true;
+        [Tooltip("调试用：把跳分飘字放慢，方便观察/截图")]
+        public bool slowPopups;
 
         private TowerRun _run;
         private BoardTopology _topology;
@@ -143,7 +143,6 @@ namespace Tower.Unity.View
                 _pressedCell = -1;
 
                 if (clicked) TryPlace(cell);
-                else Debug.Log($"[Tower] 松开但没落子：pressed={wasPressed} dragged={wasDragged} cell={cell}");
             }
         }
 
@@ -202,7 +201,7 @@ namespace Tower.Unity.View
         private void OnTurnStarted(TowerRun run)
         {
             if (Planet != null) Planet.HighlightRegion(run.CurrentFace);
-            if (Spin != null) Spin.FocusFace(run.CurrentFace);
+            if (Spin != null) Spin.FocusFace(run.CurrentFace, Cam);
             ShowMessage($"第 {run.State.TurnIndex + 1} 回合 · {run.CurrentFace} 区域");
         }
 
@@ -223,7 +222,7 @@ namespace Tower.Unity.View
 
                 SpawnFloating(source.Face.bounds.center, $"+{contribution.Amount}",
                     new Color(1f, 0.93f, 0.65f), delay);
-                delay += 0.08f;
+                delay += 0.05f;
             }
 
             if (result.Score > 0)
@@ -267,7 +266,7 @@ namespace Tower.Unity.View
                 Text = tmp,
                 Origin = worldPos,
                 Delay = delay,
-                Life = slowPopups ? 3f : 0.8f,
+                Life = slowPopups ? 2f : 0.42f,
                 BaseColor = color,
             });
         }
@@ -289,10 +288,13 @@ namespace Tower.Unity.View
                     continue;
                 }
 
-                f.Go.transform.position = f.Origin + Vector3.up * (t * 0.25f);
+                // 「跳一下」：快速上浮 + 由大缩小 + 后段淡出
+                float pop = 1f - t;
+                f.Go.transform.position = f.Origin + Vector3.up * (0.18f * pop * pop + 0.06f * t);
+                f.Go.transform.localScale = Vector3.one * (0.75f + 0.55f * pop);
 
                 Color c = f.BaseColor;
-                c.a = 1f - t * t;
+                c.a = t < 0.55f ? 1f : 1f - (t - 0.55f) / 0.45f;
                 f.Text.color = c;
             }
         }
