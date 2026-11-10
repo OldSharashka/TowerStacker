@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "com.coplaydev.unity-mcp": "file:F:/Desk/unity-mcp-beta/MCPForUnity",
     "com.unity.ide.visualstudio": "2.0.22",
     "com.unity.test-framework": "1.1.33",
     "com.unity.textmeshpro": "3.0.7",
