@@ -12,6 +12,11 @@ namespace Tower.Core
         public const string ComboId = "combo";
         public const string FirstPlusId = "first_plus";
 
+        /// <summary>卡牌贡献的规则 id（视图层拼来源文案时用）。</summary>
+        public const string DiagSameRule = "C.DiagSame";
+        public const string EmptyBonusRule = "C.EmptyBonus";
+        public const string FirstPlusRule = "C.FirstPlus";
+
         public static readonly CardDefinition ThirdDouble = new CardDefinition(
             ThirdDoubleId, "第三颗 ×2", "每回合第 3 颗骰子的命中分 ×2", CardKind.Multiply);
 

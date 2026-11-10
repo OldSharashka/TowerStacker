@@ -250,6 +250,28 @@ namespace Tower.Tests
         }
 
         [Test]
+        public void TwoDiagSame_StackWithBaseRules()
+        {
+            // 复现截图里的局面：2 张「斜同数 +1」+ 1 张「第三颗 ×2」，
+            // 放的是第 2 颗骰子（×2 不生效）。
+            var state = new RunState();
+            int cell = Board.CellId(FaceId.Front, 1, 1);
+            state.Place(Board.CellId(FaceId.Front, 0, 1), 3);   // 正交同数 +2
+            state.Place(Board.CellId(FaceId.Front, 0, 0), 3);   // 对角同数：每张卡 +1
+            state.Place(Board.CellId(FaceId.Front, 2, 2), 1);   // 对角异数 +1
+
+            ICardEffect[] cards = Cards(
+                CardCatalog.DiagSameId,
+                CardCatalog.DiagSameId,
+                CardCatalog.ThirdDoubleId);
+
+            ScoringResult result = ScoringPipeline.Evaluate(
+                _topo, state, cell, 3, 1, ScoringConfig.Default, cards);
+
+            Assert.AreEqual(5, result.Total, "2 + 2×1 + 1 = 5");
+        }
+
+        [Test]
         public void Preview_EqualsActualWithCards()
         {
             TowerRun run = NewRun(true);

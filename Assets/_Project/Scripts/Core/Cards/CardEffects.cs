@@ -43,7 +43,7 @@ namespace Tower.Core
     /// <summary>斜同数 +1：对角相邻且同数的邻居也计 1 分（新增规则）。</summary>
     internal sealed class DiagSameCard : CardEffectBase
     {
-        public const string RuleId = "C.DiagSame";
+        public const string RuleId = CardCatalog.DiagSameRule;
 
         public DiagSameCard() : base(CardCatalog.DiagSame) { }
 
@@ -63,7 +63,7 @@ namespace Tower.Core
     /// <summary>空手补偿：上一回合 0 分时，本回合第一次落子 +6。</summary>
     internal sealed class EmptyBonusCard : CardEffectBase
     {
-        public const string RuleId = "C.EmptyBonus";
+        public const string RuleId = CardCatalog.EmptyBonusRule;
         public const int Bonus = 6;
 
         public EmptyBonusCard() : base(CardCatalog.EmptyBonus) { }
@@ -143,7 +143,7 @@ namespace Tower.Core
     /// <summary>首骰 +2：每回合第 1 颗骰子命中时额外 +2。</summary>
     internal sealed class FirstPlusCard : CardEffectBase
     {
-        public const string RuleId = "C.FirstPlus";
+        public const string RuleId = CardCatalog.FirstPlusRule;
         public const int Bonus = 2;
 
         public FirstPlusCard() : base(CardCatalog.FirstPlus) { }

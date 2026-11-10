@@ -80,6 +80,7 @@ namespace Tower.Unity.View
         private int _hoverCell = -1;
         private bool _hoverValid;
         private int _hoverScore;
+        private string _previewDetail = string.Empty;
         private int _previewCell = -1;
 
         private PendingKind _pendingKind;
@@ -492,6 +493,7 @@ namespace Tower.Unity.View
             _hoverValid = false;
             _hoverCell = -1;
             _hoverScore = 0;
+            _previewDetail = string.Empty;
             ClearHoverHighlight();
         }
 
@@ -615,6 +617,7 @@ namespace Tower.Unity.View
             }
 
             string hint;
+            string detail = string.IsNullOrEmpty(_previewDetail) ? string.Empty : $"（{_previewDetail}）";
             if (_pendingKind == PendingKind.Settle)
             {
                 hint = "得分播放中 · 空格/连点加速";
@@ -629,11 +632,11 @@ namespace Tower.Unity.View
             }
             else if (_mode == PointerMode.Dragging)
             {
-                hint = _hoverValid ? $"预览：放到这里 +{_hoverScore}" : "这里不能放（空格 · 当前区域）";
+                hint = _hoverValid ? $"预览：放到这里 +{_hoverScore}{detail}" : "这里不能放（空格 · 当前区域）";
             }
             else if (_hoverValid)
             {
-                hint = $"预览：放到这里 +{_hoverScore}";
+                hint = $"预览：放到这里 +{_hoverScore}{detail}";
             }
             else
             {
@@ -646,10 +649,53 @@ namespace Tower.Unity.View
 
         private int PreviewScoreFor(int cellId)
         {
-            if (_run == null || _topology == null) return 0;
-            if (_run.PlacedThisTurn >= _run.Dice.Count) return 0;
+            if (_run == null || _topology == null) { _previewDetail = string.Empty; return 0; }
+            if (_run.PlacedThisTurn >= _run.Dice.Count) { _previewDetail = string.Empty; return 0; }
 
-            return _run.PreviewPlacement(cellId).Total;
+            ScoringResult result = _run.PreviewPlacement(cellId);
+            _previewDetail = DescribeContributions(result);
+            return result.Total;
+        }
+
+        /// <summary>把这一手的来源拼成「边同数+2、斜同数+2、角异数+1」。</summary>
+        private static string DescribeContributions(ScoringResult result)
+        {
+            if (result == null || result.Contributions.Count == 0) return string.Empty;
+
+            var order = new List<string>(4);
+            var sums = new Dictionary<string, int>(4);
+
+            for (int i = 0; i < result.Contributions.Count; i++)
+            {
+                ScoreContribution contribution = result.Contributions[i];
+                string label = RuleLabel(contribution.RuleId);
+                if (!sums.ContainsKey(label))
+                {
+                    sums[label] = 0;
+                    order.Add(label);
+                }
+                sums[label] += contribution.Amount;
+            }
+
+            var builder = new System.Text.StringBuilder();
+            for (int i = 0; i < order.Count; i++)
+            {
+                int amount = sums[order[i]];
+                if (amount <= 0) continue;
+                if (builder.Length > 0) builder.Append('、');
+                builder.Append(order[i]).Append('+').Append(amount);
+            }
+            return builder.ToString();
+        }
+
+        private static string RuleLabel(string ruleId)
+        {
+            if (ruleId == Scorer.RuleOrthoSame) return "边同数";
+            if (ruleId == Scorer.RuleDiagDiff) return "角异数";
+            if (ruleId == CardCatalog.DiagSameRule) return "斜同数";
+            if (ruleId == CardCatalog.EmptyBonusRule) return "空手补偿";
+            if (ruleId == CardCatalog.FirstPlusRule) return "首骰";
+            return "卡牌";
         }
 
         private int PickCell()
