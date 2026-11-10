@@ -50,6 +50,8 @@ namespace Tower.Unity.View
         private DragGhostView _ghost;
         private HudView _hud;
         private ResultPanelView _result;
+        private DebugPanelView _debug;
+        private NetView _net;
 
         private enum PointerMode
         {
@@ -125,6 +127,19 @@ namespace Tower.Unity.View
                 _result = ResultPanelView.Create(canvas.transform);
                 _result.RestartSameClicked += RestartSameSeed;
                 _result.RestartNewClicked += RestartNewSeed;
+
+                _debug = DebugPanelView.Create(canvas.transform);
+                _debug.ForceDieClicked += OnDebugForceDie;
+                _debug.SkipTurnClicked += OnDebugSkipTurn;
+                _debug.FillBoardClicked += OnDebugFillBoard;
+                _debug.ExportCsvClicked += OnDebugExportCsv;
+                _debug.NewSeedClicked += OnDebugNewSeed;
+                _debug.RestartClicked += OnDebugRestart;
+                _debug.TransitionDelta += OnDebugTransitionDelta;
+                _debug.PopupDelta += OnDebugPopupDelta;
+                _debug.NetViewClicked += OnDebugToggleNet;
+
+                _net = NetView.Create(canvas.transform);
             }
 
             NewRun();
@@ -139,6 +154,18 @@ namespace Tower.Unity.View
             {
                 _result.RestartSameClicked -= RestartSameSeed;
                 _result.RestartNewClicked -= RestartNewSeed;
+            }
+            if (_debug != null)
+            {
+                _debug.ForceDieClicked -= OnDebugForceDie;
+                _debug.SkipTurnClicked -= OnDebugSkipTurn;
+                _debug.FillBoardClicked -= OnDebugFillBoard;
+                _debug.ExportCsvClicked -= OnDebugExportCsv;
+                _debug.NewSeedClicked -= OnDebugNewSeed;
+                _debug.RestartClicked -= OnDebugRestart;
+                _debug.TransitionDelta -= OnDebugTransitionDelta;
+                _debug.PopupDelta -= OnDebugPopupDelta;
+                _debug.NetViewClicked -= OnDebugToggleNet;
             }
             UnsubscribeRun();
         }
@@ -259,6 +286,9 @@ namespace Tower.Unity.View
             _sphereMoved = false;
             _dragDie = -1;
             _mode = PointerMode.None;
+
+            // 调试面板 / 展开图上的点击不参与转球与落子
+            if ((_debug != null && _debug.Contains(mouse)) || (_net != null && _net.Contains(mouse))) return;
 
             if (_tray != null)
             {
@@ -512,6 +542,21 @@ namespace Tower.Unity.View
         {
             if (_tray != null && _run != null) _tray.Refresh(_run);
             RefreshHud();
+            RefreshDebugViews();
+        }
+
+        private void RefreshDebugViews()
+        {
+            if (_run == null) return;
+
+            if (_debug != null)
+            {
+                _debug.Refresh(_run, Spin != null ? Spin.transitionDuration : 0.5f, popupInterval);
+            }
+            if (_net != null && _net.IsVisible)
+            {
+                _net.Refresh(_run);
+            }
         }
 
         private void RefreshHud()
@@ -589,14 +634,25 @@ namespace Tower.Unity.View
 
             if (Input.GetKeyDown(KeyCode.Escape)) CancelPointer();
 
+            if (Input.GetKeyDown(KeyCode.F1) && _debug != null)
+            {
+                _debug.Toggle();
+                RefreshDebugViews();
+            }
+
+            // 文档 3-2：N 是 2D 展开图（原来的 N 重开已挪到调试面板/结算面板）
+            if (Input.GetKeyDown(KeyCode.N) && _net != null)
+            {
+                _net.Toggle();
+                if (_net.IsVisible) _net.Refresh(_run);
+            }
+
             if (Input.GetKeyDown(KeyCode.R) && _run.Phase == TurnPhase.Placing
                 && !IsInputLocked() && _mode != PointerMode.Dragging)
             {
                 if (_run.Reroll(0b111)) RefreshTray();
                 else ShowMessage("本回合不能重掷（已经重掷过，或已经开始放置）");
             }
-
-            if (Input.GetKeyDown(KeyCode.N)) NewRun();
         }
 
         // ------------------------------------------------------------------
@@ -748,6 +804,88 @@ namespace Tower.Unity.View
                 _accelerateUntil = now + 1.5f;
                 _accelerateClicks = 0;
             }
+        }
+
+        // ------------------------------------------------------------------
+        // 调试面板（阶段三 3-1 / 3-3）
+        // ------------------------------------------------------------------
+
+        private void OnDebugForceDie(int value)
+        {
+            if (_run == null || _run.Phase != TurnPhase.Placing || IsInputLocked()) return;
+
+            if (_run.ForceDie(_run.PlacedThisTurn, value))
+            {
+                RefreshTray();
+                ShowMessage($"已强制当前骰子为 {value}");
+            }
+        }
+
+        private void OnDebugSkipTurn()
+        {
+            if (_run == null || _run.Phase != TurnPhase.Placing || IsInputLocked()) return;
+
+            if (_run.SkipTurn())
+            {
+                RefreshTray();
+                ShowMessage("已跳过本回合");
+            }
+        }
+
+        private void OnDebugFillBoard()
+        {
+            if (_run == null || _run.IsFinished) return;
+
+            AutoPlay(_run.Settings.TurnsPerRun);
+            RefreshTray();
+            ShowMessage("已自动打满整局");
+        }
+
+        private void OnDebugExportCsv()
+        {
+            if (_run == null) return;
+
+            string path = RunCsvExporter.Export(_run);
+            if (string.IsNullOrEmpty(path))
+            {
+                ShowMessage("CSV 导出失败，见 Console");
+                return;
+            }
+
+            Debug.Log("[Tower] CSV 已导出：" + path);
+            ShowMessage("CSV 已导出：" + System.IO.Path.GetFileName(path), 6f);
+            if (_hud != null) _hud.PushLog("导出 CSV");
+        }
+
+        private void OnDebugNewSeed()
+        {
+            Seed = (ulong)System.DateTime.Now.Ticks;
+            NewRun();
+        }
+
+        private void OnDebugRestart()
+        {
+            NewRun();
+        }
+
+        private void OnDebugTransitionDelta(float delta)
+        {
+            if (Spin == null) return;
+            Spin.transitionDuration = Mathf.Clamp(Spin.transitionDuration + delta, 0.1f, 1.5f);
+            RefreshTray();
+        }
+
+        private void OnDebugPopupDelta(float delta)
+        {
+            popupInterval = Mathf.Round(Mathf.Clamp(popupInterval + delta, 0.03f, 0.2f) * 100f) / 100f;
+            RefreshTray();
+        }
+
+        private void OnDebugToggleNet()
+        {
+            if (_net == null) return;
+            _net.Toggle();
+            if (_net.IsVisible && _run != null) _net.Refresh(_run);
         }
 
         // ------------------------------------------------------------------

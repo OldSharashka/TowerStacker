@@ -215,6 +215,13 @@ namespace Tower.Core
             _currentRecord.Score += scoring.Total;
             _currentRecord.Cumulative = State.TotalScore;
 
+            for (int i = 0; i < scoring.Contributions.Count; i++)
+            {
+                string rule = scoring.Contributions[i].RuleId;
+                if (rule == Scorer.RuleOrthoSame) _currentRecord.EdgeSameHits++;
+                else if (rule == Scorer.RuleDiagDiff) _currentRecord.DiagDiffHits++;
+            }
+
             PlacedThisTurn++;
             bool turnCompleted = PlacedThisTurn >= _dice.Length;
 
@@ -229,6 +236,43 @@ namespace Tower.Core
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// 调试用：强制本回合某颗还没放的骰子点数（不消耗重掷次数）。
+        /// </summary>
+        public bool ForceDie(int index, int value)
+        {
+            if (Phase != TurnPhase.Placing) return false;
+            if (index < PlacedThisTurn || index >= _dice.Length) return false;
+            if (value < 1 || value > Settings.DiceMax) return false;
+
+            _dice[index] = value;
+            if (_currentRecord != null) _currentRecord.Dice = (int[])_dice.Clone();
+            return true;
+        }
+
+        /// <summary>
+        /// 调试用：把本回合剩下的骰子依次放到本面第一个空格。
+        /// 只跳过一个回合——EndTurn 之后 TurnIndex 变了就停，不会连跳。
+        /// </summary>
+        public bool SkipTurn()
+        {
+            if (Phase != TurnPhase.Placing) return false;
+
+            int targetTurn = State.TurnIndex;
+            int guard = 0;
+
+            while (Phase == TurnPhase.Placing
+                   && State.TurnIndex == targetTurn
+                   && guard++ < Board.CellsPerFace)
+            {
+                List<int> cells = EmptyCellsOnCurrentFace();
+                if (cells.Count == 0) return false;
+                Place(cells[0]);
+            }
+
+            return true;
         }
 
         private void EndTurn()

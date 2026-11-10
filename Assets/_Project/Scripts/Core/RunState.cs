@@ -61,5 +61,11 @@ namespace Tower.Core
         public readonly List<int> PlacedValues = new List<int>(3);
         public int Score;
         public int Cumulative;
+
+        /// <summary>本回合 R1（边同数）命中的邻居次数，CSV 明细用。</summary>
+        public int EdgeSameHits;
+
+        /// <summary>本回合 R2（角异数）命中的邻居次数，CSV 明细用。</summary>
+        public int DiagDiffHits;
     }
 }
