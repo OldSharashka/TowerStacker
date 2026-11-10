@@ -47,10 +47,9 @@ namespace Tower.Unity.View
 
         private void OnEnable() => Rebuild();
 
-        private void OnValidate()
-        {
-            if (!Application.isPlaying && isActiveAndEnabled) Rebuild();
-        }
+        // 注意：绝对不要在 OnValidate 里 Rebuild。
+        // Rebuild 会 DestroyImmediate 已有格子，而 Unity 禁止在 OnValidate 期间销毁对象，
+        // 轻则报错刷屏、重则把编辑器搞崩。改参数后请右键菜单 Rebuild。
 
         public CellView GetCell(int cellId)
         {
@@ -94,6 +93,8 @@ namespace Tower.Unity.View
             var go = new GameObject($"Cell_{cellId:00}");
             go.transform.SetParent(transform, false);
             go.layer = gameObject.layer;
+            // 生成的格子不进场景文件：每次加载由 OnEnable 重建，避免场景里存着一堆过期网格
+            go.hideFlags = HideFlags.DontSave;
 
             Mesh mesh = BuildQuad(face, row, col, out Vector3 center, out Vector3 normal);
 
