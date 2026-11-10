@@ -10,7 +10,12 @@ namespace Tower.Unity.View
     /// 并给每格挂上数字文字与拾取组件。
     /// 参考做法同 Oskar Stålberg 的 Planet 演示：立方体面片投影到球。
     /// </summary>
-    [ExecuteAlways]
+    /// <summary>
+    /// 把逻辑上的立方体 54 格投影成球面上的 54 个曲面片（cube-sphere）。
+    /// 刻意不加 [ExecuteAlways]：编辑模式的域重载期间不构建任何对象，
+    /// 否则每次重载都要重建 54 个格子 + TMP + 底球 + 线框，很容易把编辑器拖崩。
+    /// 需要预览时右键菜单 Rebuild。
+    /// </summary>
     [DisallowMultipleComponent]
     public sealed class PlanetMeshBuilder : MonoBehaviour
     {
@@ -50,7 +55,11 @@ namespace Tower.Unity.View
 
         public IReadOnlyList<CellView> Cells => _cells;
 
-        private void OnEnable() => Rebuild();
+        private void OnEnable()
+        {
+            // 只在运行时构建；编辑模式靠右键菜单，避免拖慢域重载
+            if (Application.isPlaying) Rebuild();
+        }
 
         // 注意：绝对不要在 OnValidate 里 Rebuild。
         // Rebuild 会 DestroyImmediate 已有格子，而 Unity 禁止在 OnValidate 期间销毁对象，

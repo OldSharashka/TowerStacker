@@ -48,6 +48,7 @@ namespace Tower.Unity.View
         private void Start()
         {
             if (Planet == null) Planet = FindObjectOfType<PlanetMeshBuilder>();
+            if (Planet != null && Planet.Cells.Count == 0) Planet.Rebuild();   // 兜底：编辑模式没建过
             if (Spin == null) Spin = GetComponent<PlanetSpin>();
             if (Spin == null) Spin = gameObject.AddComponent<PlanetSpin>();   // 白盒期自动挂，省得手动配
             if (Cam == null) Cam = Camera.main;
