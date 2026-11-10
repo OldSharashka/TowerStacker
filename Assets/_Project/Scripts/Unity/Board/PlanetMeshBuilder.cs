@@ -96,7 +96,7 @@ namespace Tower.Unity.View
             // 生成的格子不进场景文件：每次加载由 OnEnable 重建，避免场景里存着一堆过期网格
             go.hideFlags = HideFlags.DontSave;
 
-            Mesh mesh = BuildQuad(face, row, col, out Vector3 center, out Vector3 normal);
+            Mesh mesh = BuildPatch(face, row, col, out Vector3 center, out Vector3 normal);
 
             var filter = go.AddComponent<MeshFilter>();
             filter.sharedMesh = mesh;
@@ -151,7 +151,15 @@ namespace Tower.Unity.View
             return tmp;
         }
 
-        private Mesh BuildQuad(FaceId face, int row, int col, out Vector3 center, out Vector3 normal)
+        [Header("曲面细分（越大越圆，1 = 平面）")]
+        [Range(1, 10)]
+        public int subdivisions = 4;
+
+        /// <summary>
+        /// 生成一个格子的曲面片：内部 n×n 细分，每个顶点都投影到球面，
+        /// 所以整颗球是光滑的，网格线来自格子之间留的缝。
+        /// </summary>
+        private Mesh BuildPatch(FaceId face, int row, int col, out Vector3 center, out Vector3 normal)
         {
             FaceFrame frame = FaceFrames.Get(face);
 
@@ -163,38 +171,60 @@ namespace Tower.Unity.View
             float top = (1f - row * step) * shrink;
             float bottom = (1f - (row + 1) * step) * shrink;
 
-            Vector3[] corners =
-            {
-                ToSphere(frame, left, top),
-                ToSphere(frame, right, top),
-                ToSphere(frame, right, bottom),
-                ToSphere(frame, left, bottom),
-            };
+            // 留缝：把参数范围往里收，投影到球面后就成了一条细缝
+            float padU = (right - left) * cellGap * 0.5f;
+            float padV = (top - bottom) * cellGap * 0.5f;
+            float uMin = left + padU;
+            float uMax = right - padU;
+            float vMin = top - padV;
+            float vMax = bottom + padV;
 
-            Vector3 mid = Vector3.zero;
-            for (int i = 0; i < 4; i++) mid += corners[i];
-            center = (mid / 4f).normalized * radius;
-            normal = center.normalized;
+            int n = Mathf.Max(1, subdivisions);
+            int side = n + 1;
 
-            var vertices = new Vector3[4];
-            var normals = new Vector3[4];
-            for (int i = 0; i < 4; i++)
+            var vertices = new Vector3[side * side];
+            var normals = new Vector3[side * side];
+            var uvs = new Vector2[side * side];
+
+            for (int j = 0; j <= n; j++)
             {
-                Vector3 p = Vector3.Lerp(corners[i], center, cellGap).normalized * radius;
-                vertices[i] = p;
-                normals[i] = p.normalized;
+                float v = Mathf.Lerp(vMin, vMax, j / (float)n);   // 自上而下
+                for (int i = 0; i <= n; i++)
+                {
+                    float u = Mathf.Lerp(uMin, uMax, i / (float)n);
+                    Vector3 p = ToSphere(frame, u, v);
+                    int idx = j * side + i;
+                    vertices[idx] = p;
+                    normals[idx] = p.normalized;                  // 径向法线 → 光滑着色
+                    uvs[idx] = new Vector2(i / (float)n, 1f - j / (float)n);
+                }
             }
 
-            var mesh = new Mesh { name = $"Cell_{face}_{row}{col}", hideFlags = HideFlags.DontSave };
-            mesh.SetVertices(vertices);
-            mesh.SetNormals(normals);
-            mesh.SetUVs(0, new[]
+            var triangles = new int[n * n * 6];
+            int t = 0;
+            for (int j = 0; j < n; j++)
             {
-                new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(1f, 0f), new Vector2(0f, 0f),
-            });
-            // 绕序必须是「从球外看是逆时针」：v0(左上) → v2(右下) → v1(右上)，
-            // 这样面法线朝外。写反了会导致正面被剔除、看到球的内部，射线也会穿到背面去。
-            mesh.SetTriangles(new[] { 0, 2, 1, 0, 3, 2 }, 0);
+                for (int i = 0; i < n; i++)
+                {
+                    int a = j * side + i;
+                    int b = a + 1;
+                    int c = a + side + 1;
+                    int d = a + side;
+
+                    // 从球外看逆时针，法线朝外
+                    triangles[t++] = a; triangles[t++] = d; triangles[t++] = c;
+                    triangles[t++] = a; triangles[t++] = c; triangles[t++] = b;
+                }
+            }
+
+            center = ToSphere(frame, (uMin + uMax) * 0.5f, (vMin + vMax) * 0.5f);
+            normal = center.normalized;
+
+            var mesh = new Mesh { name = $"Cell_{face}_{row}{col}", hideFlags = HideFlags.DontSave };
+            mesh.vertices = vertices;
+            mesh.normals = normals;
+            mesh.uv = uvs;
+            mesh.triangles = triangles;
             mesh.RecalculateBounds();
             return mesh;
         }

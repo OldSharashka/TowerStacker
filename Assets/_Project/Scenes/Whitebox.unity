@@ -209,11 +209,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   Planet: {fileID: 0}
+  Spin: {fileID: 0}
   Cam: {fileID: 0}
   Seed: 20261110
-  TargetScore: 170
-  AutoPlayTurns: 5
-  slowPopups: 1
+  TargetScore: 40
+  AutoPlayTurns: 0
+  slowPopups: 0
 --- !u!1 &960808817
 GameObject:
   m_ObjectHideFlags: 0
