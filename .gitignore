@@ -1,9 +1,12 @@
 # ---- Unity 生成物 ----
 [Ll]ibrary/
 [Tt]emp/
-[Oo]bj/
-[Bb]uild/
-[Bb]uilds/
+# 注意：这几条必须锚定在仓库根目录。
+# 不锚定的 [Bb]uild/ 会把 Packages/MCPForUnity/Editor/Tools/Build/ 一起吃掉，
+# 那是插件源码，漏掉它会导致新克隆的工程编译失败（ManageBuild.cs 引用该命名空间）。
+/obj/
+/Build/
+/Builds/
 [Ll]ogs/
 [Uu]ser[Ss]ettings/
 [Mm]emoryCaptures/

@@ -157,6 +157,10 @@ MonoBehaviour:
   cellGap: 0.035
   emptyColor: {r: 0.28, g: 0.31, b: 0.36, a: 1}
   regionTint: {r: 0.2, g: 0.24, b: 0.3, a: 1}
+  backingColor: {r: 0.1, g: 0.11, b: 0.14, a: 1}
+  frameColor: {r: 1, g: 0.82, b: 0.25, a: 1}
+  frameWidth: 0.03
+  frameLift: 0.015
   value1Color: {r: 0.95, g: 0.42, b: 0.32, a: 1}
   value2Color: {r: 0.35, g: 0.78, b: 0.45, a: 1}
   value3Color: {r: 0.36, g: 0.6, b: 0.95, a: 1}
@@ -164,6 +168,7 @@ MonoBehaviour:
   font: {fileID: 0}
   fontSize: 0.95
   textLift: 0.03
+  subdivisions: 4
 --- !u!4 &756688274
 Transform:
   m_ObjectHideFlags: 0
@@ -195,7 +200,7 @@ MonoBehaviour:
   Spin: {fileID: 0}
   Cam: {fileID: 0}
   Seed: 20261110
-  TargetScore: 40
+  TargetScore: 170
   AutoPlayTurns: 0
   slowPopups: 0
 --- !u!1 &960808817
