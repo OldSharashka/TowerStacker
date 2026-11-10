@@ -1,62 +1,68 @@
 using System.Collections.Generic;
+using TMPro;
 using Tower.Core;
 using UnityEngine;
 
 namespace Tower.Unity.View
 {
     /// <summary>
-    /// 把逻辑上的立方体 54 格投影成球面上的 54 个四边形（cube-sphere）。
-    /// 白盒用途：只要能看到格子、能点中、区域可分辨即可，不做任何美术处理。
-    /// 参考：Oskar Stålberg 的 Planet 演示（同样的"立方体面片投影到球"做法）。
+    /// 把逻辑上的立方体 54 格投影成球面上的 54 个四边形（cube-sphere），
+    /// 并给每格挂上数字文字与拾取组件。
+    /// 参考做法同 Oskar Stålberg 的 Planet 演示：立方体面片投影到球。
     /// </summary>
     [ExecuteAlways]
     [DisallowMultipleComponent]
     public sealed class PlanetMeshBuilder : MonoBehaviour
     {
         [Header("形状")]
-        [Tooltip("球半径")]
         public float radius = 1f;
 
-        [Tooltip("每个面整体向面心收缩的比例，用来在面与面之间留出缝隙，让 6 个区域可分")]
-        [Range(0f, 0.3f)]
-        public float faceGap = 0.08f;
+        [Tooltip("每个面整体向面心收缩的比例，用于面与面之间留一条细缝")]
+        [Range(0f, 0.2f)]
+        public float faceGap = 0.02f;
 
-        [Tooltip("单格四角向格心收缩的比例，用来在格子之间留缝")]
-        [Range(0f, 0.3f)]
-        public float cellGap = 0.06f;
+        [Tooltip("单格四角向格心收缩的比例，用于格子之间留缝")]
+        [Range(0f, 0.2f)]
+        public float cellGap = 0.035f;
 
-        [Header("外观（白盒）")]
-        public Color emptyColor = new Color(0.55f, 0.60f, 0.68f);
-        public Color value1Color = new Color(0.85f, 0.35f, 0.30f);
-        public Color value2Color = new Color(0.35f, 0.70f, 0.45f);
-        public Color value3Color = new Color(0.35f, 0.55f, 0.90f);
-        public Color currentFaceTint = new Color(1f, 1f, 1f, 1f);
+        [Header("白盒配色")]
+        public Color emptyColor = new Color(0.58f, 0.63f, 0.71f);
+        public Color regionTint = new Color(0.42f, 0.50f, 0.62f);
+        public Color value1Color = new Color(0.90f, 0.45f, 0.38f);
+        public Color value2Color = new Color(0.42f, 0.76f, 0.50f);
+        public Color value3Color = new Color(0.45f, 0.62f, 0.92f);
+        public Color textColor = new Color(0.10f, 0.11f, 0.14f);
 
-        private const int Grid = Board.CellsPerRow + 1; // 4x4 顶点
+        [Header("文字")]
+        public TMP_FontAsset font;
+        public float fontSize = 6f;
+        public float textLift = 0.02f;
 
-        private readonly List<GameObject> _cells = new List<GameObject>(Board.CellCount);
+        private readonly List<CellView> _cells = new List<CellView>(Board.CellCount);
+        private readonly List<GameObject> _spawned = new List<GameObject>(Board.CellCount);
         private Material _material;
+        private static readonly int ColorId = Shader.PropertyToID("_Color");
+
+        public IReadOnlyList<CellView> Cells => _cells;
 
         private void OnEnable() => Rebuild();
 
         private void OnValidate()
         {
-            if (isActiveAndEnabled) Rebuild();
+            if (!Application.isPlaying && isActiveAndEnabled) Rebuild();
+        }
+
+        public CellView GetCell(int cellId)
+        {
+            if (cellId < 0 || cellId >= _cells.Count) return null;
+            return _cells[cellId];
         }
 
         [ContextMenu("Rebuild")]
         public void Rebuild()
         {
             Clear();
-
-            if (_material == null)
-            {
-                // 白盒用受光材质：明暗能看出球体的体积，Unlit 看上去像一块平板
-                Shader shader = Shader.Find("Standard");
-                if (shader == null) shader = Shader.Find("Unlit/Color");
-                _material = new Material(shader) { name = "WhiteboxCell" };
-                if (_material.HasProperty("_Glossiness")) _material.SetFloat("_Glossiness", 0.05f);
-            }
+            EnsureMaterial();
 
             for (int face = 0; face < Board.FaceCount; face++)
             {
@@ -70,14 +76,26 @@ namespace Tower.Unity.View
             }
         }
 
+        private void EnsureMaterial()
+        {
+            if (_material != null) return;
+
+            Shader shader = Shader.Find("Standard");
+            if (shader == null) shader = Shader.Find("Unlit/Color");
+
+            _material = new Material(shader) { name = "WhiteboxCell", hideFlags = HideFlags.DontSave };
+            if (_material.HasProperty("_Glossiness")) _material.SetFloat("_Glossiness", 0.05f);
+        }
+
         private void CreateCell(FaceId face, int row, int col)
         {
             int cellId = Board.CellId(face, row, col);
-            var go = new GameObject($"Cell_{cellId:00}_{face}_{row}{col}");
+
+            var go = new GameObject($"Cell_{cellId:00}");
             go.transform.SetParent(transform, false);
             go.layer = gameObject.layer;
 
-            Mesh mesh = BuildQuad(face, row, col);
+            Mesh mesh = BuildQuad(face, row, col, out Vector3 center, out Vector3 normal);
 
             var filter = go.AddComponent<MeshFilter>();
             filter.sharedMesh = mesh;
@@ -86,23 +104,59 @@ namespace Tower.Unity.View
             renderer.sharedMaterial = _material;
             renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             renderer.receiveShadows = false;
-            ApplyColor(renderer, emptyColor);
 
             var collider = go.AddComponent<MeshCollider>();
             collider.sharedMesh = mesh;
             collider.convex = false;
 
-            _cells.Add(go);
+            TextMeshPro label = CreateLabel(go.transform, face, center, normal);
+
+            var view = go.AddComponent<CellView>();
+            view.Bind(cellId, renderer, label);
+            view.SetColor(emptyColor);
+            view.SetText(string.Empty, textColor);
+
+            _cells.Add(view);
+            _spawned.Add(go);
         }
 
-        private Mesh BuildQuad(FaceId face, int row, int col)
+        private TextMeshPro CreateLabel(Transform parent, FaceId face, Vector3 center, Vector3 normal)
+        {
+            var labelGo = new GameObject("Label");
+            labelGo.transform.SetParent(parent, false);
+            labelGo.transform.localPosition = center + normal * textLift;
+
+            FaceFrame frame = FaceFrames.Get(face);
+            Vector3 up = ToVector(frame.Up);
+            up -= normal * Vector3.Dot(up, normal);
+            if (up.sqrMagnitude < 0.01f) up = Vector3.up;
+            up.Normalize();
+
+            // 文字朝向球外（相机在外面看）
+            labelGo.transform.rotation = Quaternion.LookRotation(-normal, up);
+
+            var tmp = labelGo.AddComponent<TextMeshPro>();
+            if (font != null) tmp.font = font;
+            tmp.text = string.Empty;
+            tmp.fontSize = fontSize;
+            tmp.enableAutoSizing = true;
+            tmp.fontSizeMin = 1f;
+            tmp.fontSizeMax = fontSize;
+            tmp.alignment = TextAlignmentOptions.Center;
+            tmp.color = textColor;
+            tmp.rectTransform.sizeDelta = new Vector2(0.5f, 0.5f);
+            tmp.raycastTarget = false;
+
+            return tmp;
+        }
+
+        private Mesh BuildQuad(FaceId face, int row, int col, out Vector3 center, out Vector3 normal)
         {
             FaceFrame frame = FaceFrames.Get(face);
 
-            float step = 2f / Board.CellsPerRow;              // 2/3
-            float shrink = 1f - faceGap;                      // 面内整体收缩
+            float step = 2f / Board.CellsPerRow;
+            float shrink = 1f - faceGap;
 
-            // 该格在面上的四个角（R 向右、U 向上），再整体按面收缩
             float left = (-1f + col * step) * shrink;
             float right = (-1f + (col + 1) * step) * shrink;
             float top = (1f - row * step) * shrink;
@@ -116,30 +170,26 @@ namespace Tower.Unity.View
                 ToSphere(frame, left, bottom),
             };
 
-            // 四角向格心收缩，形成缝隙
-            Vector3 center = Vector3.zero;
-            for (int i = 0; i < 4; i++) center += corners[i];
-            center = (center / 4f).normalized * radius;
+            Vector3 mid = Vector3.zero;
+            for (int i = 0; i < 4; i++) mid += corners[i];
+            center = (mid / 4f).normalized * radius;
+            normal = center.normalized;
 
             var vertices = new Vector3[4];
             var normals = new Vector3[4];
             for (int i = 0; i < 4; i++)
             {
-                Vector3 p = Vector3.Lerp(corners[i], center, cellGap);
-                p = p.normalized * radius;
+                Vector3 p = Vector3.Lerp(corners[i], center, cellGap).normalized * radius;
                 vertices[i] = p;
                 normals[i] = p.normalized;
             }
 
-            var mesh = new Mesh { name = $"Cell_{face}_{row}{col}" };
+            var mesh = new Mesh { name = $"Cell_{face}_{row}{col}", hideFlags = HideFlags.DontSave };
             mesh.SetVertices(vertices);
             mesh.SetNormals(normals);
             mesh.SetUVs(0, new[]
             {
-                new Vector2(0f, 1f),
-                new Vector2(1f, 1f),
-                new Vector2(1f, 0f),
-                new Vector2(0f, 0f),
+                new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(1f, 0f), new Vector2(0f, 0f),
             });
             mesh.SetTriangles(new[] { 0, 1, 2, 0, 2, 3 }, 0);
             mesh.RecalculateBounds();
@@ -148,26 +198,17 @@ namespace Tower.Unity.View
 
         private Vector3 ToSphere(FaceFrame frame, float u, float v)
         {
-            Vector3 p = ToVector(frame.Normal)
-                        + ToVector(frame.Right) * u
-                        + ToVector(frame.Up) * v;
+            Vector3 p = ToVector(frame.Normal) + ToVector(frame.Right) * u + ToVector(frame.Up) * v;
             return p.normalized * radius;
         }
 
         private static Vector3 ToVector(Vec3 v) => new Vector3(v.X, v.Y, v.Z);
 
-        private void ApplyColor(Renderer renderer, Color color)
-        {
-            var block = new MaterialPropertyBlock();
-            renderer.GetPropertyBlock(block);
-            block.SetColor("_Color", color);
-            renderer.SetPropertyBlock(block);
-        }
-
-        /// <summary>按格子里的数字更新颜色（0 = 空）。供视图层调用。</summary>
+        /// <summary>按格子里的数字刷新外观（0 = 空）。</summary>
         public void SetCellValue(int cellId, int value)
         {
-            if (cellId < 0 || cellId >= _cells.Count) return;
+            CellView view = GetCell(cellId);
+            if (view == null) return;
 
             Color color;
             switch (value)
@@ -178,19 +219,47 @@ namespace Tower.Unity.View
                 default: color = emptyColor; break;
             }
 
-            ApplyColor(_cells[cellId].GetComponent<Renderer>(), color);
+            view.SetColor(color);
+            view.SetText(value > 0 ? value.ToString() : string.Empty, textColor);
+        }
+
+        /// <summary>把某个区域整片染色，帮助玩家看出「本回合是哪 9 格」。</summary>
+        public void HighlightRegion(FaceId? face)
+        {
+            for (int cell = 0; cell < _cells.Count; cell++)
+            {
+                CellView view = _cells[cell];
+                if (view == null) continue;
+
+                bool empty = view.Label != null && string.IsNullOrEmpty(view.Label.text);
+                if (!empty) continue;
+
+                bool inRegion = face.HasValue && Board.FaceOf(cell) == face.Value;
+                view.SetColor(inRegion ? regionTint : emptyColor);
+            }
+        }
+
+        public void ResetAll()
+        {
+            for (int cell = 0; cell < _cells.Count; cell++)
+            {
+                if (_cells[cell] == null) continue;
+                _cells[cell].SetColor(emptyColor);
+                _cells[cell].SetText(string.Empty, textColor);
+            }
         }
 
         private void Clear()
         {
-            for (int i = _cells.Count - 1; i >= 0; i--)
+            for (int i = _spawned.Count - 1; i >= 0; i--)
             {
-                GameObject go = _cells[i];
+                GameObject go = _spawned[i];
                 if (go == null) continue;
-
                 if (Application.isPlaying) Destroy(go);
                 else DestroyImmediate(go);
             }
+
+            _spawned.Clear();
             _cells.Clear();
         }
     }
