@@ -1,0 +1,45 @@
+# ---- Unity 生成物 ----
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# ---- IDE / 解决方案（由 Unity 重新生成）----
+.vs/
+.idea/
+.vscode/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# ---- 构建产物 ----
+*.apk
+*.aab
+*.app
+*.unitypackage
+crashlytics-build.properties
+
+# ---- 本项目临时文件 ----
+TestResults*.xml
+_tests.log
+_unity_create.log
+_git_install.log
+
+# ---- 大文件不进仓库 ----
+视频1.mp4
+*.mp4
