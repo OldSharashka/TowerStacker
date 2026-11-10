@@ -129,7 +129,8 @@ namespace Tower.Unity.View
                 go.transform.SetParent(transform, false);
 
                 var line = go.AddComponent<LineRenderer>();
-                line.useWorldSpace = true;
+                // 必须是本地坐标：边框是 Board 的子物体，球转动时它要跟着转
+                line.useWorldSpace = false;
                 line.loop = true;
                 line.widthMultiplier = frameWidth;
                 line.numCapVertices = 2;
